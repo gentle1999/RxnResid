@@ -1,0 +1,10 @@
+  docker-check:
+    name: Check Docker Build
+    runs-on: ubuntu-latest
+    needs: build-and-test # 测试通过后再构建镜像
+    steps:
+      - uses: {{GITEA_CHECKOUT_ACTION}}
+
+      - name: Build Docker Image
+        # 仅仅尝试构建，确保 Dockerfile 没写错
+        run: docker build .
