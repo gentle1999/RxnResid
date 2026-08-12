@@ -1,0 +1,75 @@
+# Default RxnResid model, data, and training configuration.
+data:
+  path: data/new_full_df_exact_balanced_40ene_40diene.csv
+  cache_enabled: true
+  cache_dir: .cache/rxnresid
+  target_column: G_T_activate
+  reaction_column: rxn_smiles
+  condition_columns: []
+  component_id_columns: [ene_id, diene_id]
+  route_id_column: prod_id
+  baseline_reduction: mean
+  split_manifest: data/splits/group_10fold_seed42.json
+
+model:
+  variant: rxnresid
+  hidden_dim: 192
+  baseline_factor_rank: 48
+  baseline_graph_contribution: true
+  baseline_identity_factors: true
+  baseline_product_group_correction: true
+  component_hash_buckets: 4096
+  component_roles: [ene, diene]
+  route_id_count: 8
+  route_embedding_dim: 8
+  substrate_encoder:
+    type: gine
+    num_layers: 4
+    dropout: 0.05
+    pooling: sum
+    options: {train_eps: true, residual: true}
+  path_encoder:
+    type: gine_gatv2
+    num_layers: 4
+    dropout: 0.05
+    pooling: sum
+    options: {gine_layers: 2, heads: 4, train_eps: true, residual: true}
+  product_encoder:
+    type: gine
+    num_layers: 4
+    dropout: 0.05
+    pooling: sum
+    options: {train_eps: true, residual: true}
+  mapping: {mode: latent_diff, hidden_dim: 64, dropout: 0.05}
+  baseline_head: {hidden_dims: [96]}
+  residual_head: {hidden_dims: [96]}
+
+loss:
+  absolute: 1.0
+  baseline: 0.35
+  residual: 0.2
+  pairwise: 0.0
+  center_residual: false
+  baseline_group_balanced: true
+  residual_group_balanced: false
+  huber_beta: 0.1
+
+training:
+  batch_size_paths: 512
+  epochs: 1000
+  learning_rate: 0.0005
+  component_learning_rate: 0.001
+  weight_decay: 0.0002
+  fused_optimizer: true
+  seed: 42
+  device: auto
+  mixed_precision: "no"
+  gradient_accumulation_steps: 1
+  split_batches: false
+  group_complete_batches: true
+  target_scaling: true
+  residual_target_scaling: false
+  baseline_pretrain_epochs: 0
+  residual_pretrain_epochs: 0
+  scheduler: {name: linear_warmup_cosine, warmup_ratio: 0.05, min_lr_ratio: 0.0}
+  early_stopping: {enabled: true, monitor: mae, mode: min, min_epochs: 300, patience: 200, min_delta: 0.0}

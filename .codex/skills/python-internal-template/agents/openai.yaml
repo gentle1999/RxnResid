@@ -1,4 +1,0 @@
-interface:
-  display_name: "Python Internal Template"
-  short_description: "Use and maintain this internal Python project template"
-  default_prompt: "Use this skill when initializing or maintaining repositories created from MyRepositoryTemplate."

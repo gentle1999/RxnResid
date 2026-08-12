@@ -1,0 +1,169 @@
+<mxfile host="Electron" modified="2026-08-12T05:45:00.000Z" agent="draw.io" version="31.1.8">
+  <diagram id="rxnresid-architecture" name="RxnResid Architecture">
+    <mxGraphModel dx="1900" dy="960" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="960" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="RxnResid: Group Baseline + Mean-Centered Path Residual" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=27;fontStyle=1;fontColor=#17202A;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1250" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="Separate substrate-level reactivity from route-specific deviations while preserving exact group consistency." style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=14;fontColor=#566573;" vertex="1" parent="1">
+          <mxGeometry x="40" y="63" width="1200" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="inputPanel" value="" style="rounded=1;whiteSpace=wrap;html=0;arcSize=6;fillColor=#FBFCFC;strokeColor=#AAB7B8;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="115" width="250" height="745" as="geometry" />
+        </mxCell>
+        <mxCell id="baselinePanel" value="" style="rounded=1;whiteSpace=wrap;html=0;arcSize=6;fillColor=#F7FBF7;strokeColor=#70A77A;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="115" width="1150" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="residualPanel" value="" style="rounded=1;whiteSpace=wrap;html=0;arcSize=6;fillColor=#F6FAFD;strokeColor=#6A9BC3;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="455" width="1150" height="405" as="geometry" />
+        </mxCell>
+        <mxCell id="outputPanel" value="" style="rounded=1;whiteSpace=wrap;html=0;arcSize=6;fillColor=#FBFCFC;strokeColor=#7F8C8D;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="115" width="300" height="745" as="geometry" />
+        </mxCell>
+
+        <mxCell id="inputHeader" value="INPUT GRAPHS" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=14;fontStyle=1;fontColor=#34495E;" vertex="1" parent="1">
+          <mxGeometry x="65" y="128" width="200" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="baselineHeader" value="GROUP BASELINE BRANCH" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=14;fontStyle=1;fontColor=#255C2E;" vertex="1" parent="1">
+          <mxGeometry x="700" y="128" width="400" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="residualHeader" value="PATH RESIDUAL BRANCH" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=14;fontStyle=1;fontColor=#1B4F72;" vertex="1" parent="1">
+          <mxGeometry x="700" y="468" width="400" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="outputHeader" value="PHYSICAL OUTPUT" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=14;fontStyle=1;fontColor=#273746;" vertex="1" parent="1">
+          <mxGeometry x="1570" y="128" width="200" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="completeGroup" value="Complete candidate set&#xa;for one reactant group" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFFFFF;strokeColor=#566573;strokeWidth=2;fontColor=#17202A;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="65" y="165" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="components" value="Deduplicated reactant&#xa;component graphs" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#E8F5E9;strokeColor=#4F8A5B;strokeWidth=2;fontColor=#1E4620;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="65" y="260" width="200" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="products" value="Candidate product&#xa;molecular graphs" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFF3E0;strokeColor=#C47A20;strokeWidth=2;fontColor=#6E4214;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="65" y="350" width="200" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="exactCgr" value="Exact reaction-change&#xa;graph (CGR)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#EAF2F8;strokeColor=#3577A8;strokeWidth=2;fontColor=#1B4F72;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="65" y="515" width="200" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="deltaCgr" value="Group-relative delta&#xa;change graph" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#EAF2F8;strokeColor=#3577A8;strokeWidth=2;fontColor=#1B4F72;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="65" y="615" width="200" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="mappedInput" value="Mapped reaction center&#xa;+ route identifier" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#F4ECF7;strokeColor=#7D5A8C;strokeWidth=2;fontColor=#512E5F;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="65" y="715" width="200" height="68" as="geometry" />
+        </mxCell>
+
+        <mxCell id="substrateEncoder" value="Substrate GINE&#xa;role-aware component states" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#E8F5E9;strokeColor=#4F8A5B;strokeWidth=2;fontColor=#1E4620;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="185" width="190" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="identityEmbedding" value="Component identity&#xa;embeddings" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFFFFF;strokeColor=#70A77A;fontColor=#255C2E;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="385" y="278" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="factorSurface" value="Trainable rank-48&#xa;interaction surface&#xa;&#xa;biases + factor products" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#D5F5E3;strokeColor=#33804A;strokeWidth=2;fontColor=#145A32;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="630" y="180" width="210" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="pairBaseline" value="Substrate-pair&#xa;baseline" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFFFFF;strokeColor=#33804A;strokeWidth=2;fontColor=#145A32;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="198" width="160" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="productEncoder" value="Product GINE&#xa;path embeddings" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFF3E0;strokeColor=#C47A20;strokeWidth=2;fontColor=#6E4214;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="345" width="190" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="productStats" value="Group product statistics&#xa;mean / min / max" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FEF5E7;strokeColor=#C47A20;fontColor=#6E4214;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="630" y="345" width="210" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="groupCorrection" value="Group-level product&#xa;correction" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#E8F5E9;strokeColor=#4F8A5B;strokeWidth=2;fontColor=#1E4620;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="345" width="160" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="baselineResult" value="Group baseline&#xa;B(g)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#D5F5E3;strokeColor=#33804A;strokeWidth=3;fontColor=#145A32;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="245" width="210" height="82" as="geometry" />
+        </mxCell>
+
+        <mxCell id="exactEncoder" value="Exact CGR encoder&#xa;GINE-GATv2" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#EAF2F8;strokeColor=#3577A8;strokeWidth=2;fontColor=#1B4F72;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="510" width="190" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="deltaEncoder" value="Delta CGR encoder&#xa;independent GINE-GATv2" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#EAF2F8;strokeColor=#3577A8;strokeWidth=2;fontColor=#1B4F72;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="610" width="190" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="mappingEncoder" value="Reaction-center&#xa;latent difference" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#F4ECF7;strokeColor=#7D5A8C;strokeWidth=2;fontColor=#512E5F;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="710" width="190" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="featureFusion" value="Route feature fusion&#xa;&#xa;exact CGR + delta CGR&#xa;product factor + mapped center&#xa;component factors + route ID" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#D6EAF8;strokeColor=#2874A6;strokeWidth=2;fontColor=#154360;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="545" width="225" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="productFactor" value="Product factor&#xa;from Product GINE" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFF3E0;strokeColor=#C47A20;fontColor=#6E4214;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="615" y="780" width="165" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="componentContext" value="Component factors&#xa;from baseline branch" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#E8F5E9;strokeColor=#4F8A5B;fontColor=#1E4620;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="815" y="780" width="165" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="routeHead" value="Route head&#xa;nonnegative potential&#xa;u(g,p)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FFFFFF;strokeColor=#2874A6;strokeWidth=2;fontColor=#154360;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="990" y="585" width="175" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="centering" value="Group mean centering&#xa;&#xa;R(g,p) = u(g,p) - mean_p u(g,p)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FDEDEC;strokeColor=#C44B43;strokeWidth=2;fontColor=#78281F;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="575" width="210" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="zeroMean" value="Exact constraint: sum_p R(g,p) = 0" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=12;fontStyle=1;fontColor=#922B21;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="705" width="230" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="outputBaseline" value="B(g)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#D5F5E3;strokeColor=#33804A;strokeWidth=2;fontColor=#145A32;fontSize=17;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="250" width="110" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="outputResidual" value="R(g,p)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#D6EAF8;strokeColor=#2874A6;strokeWidth=2;fontColor=#154360;fontSize=17;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="598" width="110" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="sum" value="+" style="ellipse;whiteSpace=wrap;html=0;aspect=fixed;fillColor=#FFFFFF;strokeColor=#566573;strokeWidth=2;fontColor=#17202A;fontSize=25;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1680" y="680" width="58" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="prediction" value="Predicted path barrier&#xa;&#xa;y-hat(g,p) = B(g) + R(g,p)" style="rounded=1;whiteSpace=wrap;html=0;arcSize=8;fillColor=#FCF3CF;strokeColor=#B7950B;strokeWidth=3;fontColor=#5D4A00;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1599" y="760" width="220" height="77" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#4F8A5B;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="components" target="substrateEncoder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#4F8A5B;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.3;" edge="1" parent="1" source="substrateEncoder" target="factorSurface"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#70A77A;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.8;" edge="1" parent="1" source="identityEmbedding" target="factorSurface"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#33804A;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="factorSurface" target="pairBaseline"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#C47A20;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="products" target="productEncoder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#C47A20;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="productEncoder" target="productStats"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#C47A20;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="productStats" target="groupCorrection"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#33804A;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.25;" edge="1" parent="1" source="pairBaseline" target="baselineResult"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#4F8A5B;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.75;" edge="1" parent="1" source="groupCorrection" target="baselineResult"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#3577A8;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="exactCgr" target="exactEncoder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#3577A8;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="deltaCgr" target="deltaEncoder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#7D5A8C;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="mappedInput" target="mappingEncoder"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#2874A6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.2;" edge="1" parent="1" source="exactEncoder" target="featureFusion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#2874A6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="deltaEncoder" target="featureFusion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#7D5A8C;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.8;" edge="1" parent="1" source="mappingEncoder" target="featureFusion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#C47A20;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=0;entryX=0.25;entryY=1;" edge="1" parent="1" source="productFactor" target="featureFusion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#4F8A5B;strokeWidth=2;endArrow=block;endFill=1;exitX=0.5;exitY=0;entryX=0.75;entryY=1;" edge="1" parent="1" source="componentContext" target="featureFusion"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#2874A6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="featureFusion" target="routeHead"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#C44B43;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="routeHead" target="centering"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#33804A;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="baselineResult" target="outputBaseline"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#2874A6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="centering" target="outputResidual"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#33804A;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="outputBaseline" target="sum">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1760" y="283" />
+              <mxPoint x="1760" y="709" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#2874A6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="outputResidual" target="sum">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1668" y="631" />
+              <mxPoint x="1668" y="709" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e25" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#B7950B;strokeWidth=3;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="sum" target="prediction"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

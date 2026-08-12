@@ -1,8 +1,0 @@
-services:
-  app:
-    build: .
-    command: myrepositorytemplate
-    volumes:
-      - ./src:/app/src
-    environment:
-      - MY_ENV_VAR=development
