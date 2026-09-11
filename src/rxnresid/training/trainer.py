@@ -39,6 +39,35 @@ class PredictionRecord:
     residual: float
     baseline_target: float | None = None
     residual_target: float | None = None
+    aleatoric_variance: float | None = None
+    epistemic_variance: float | None = None
+    predictive_variance: float | None = None
+
+    @property
+    def aleatoric_std(self) -> float | None:
+        return _sqrt_optional(self.aleatoric_variance)
+
+    @property
+    def epistemic_std(self) -> float | None:
+        return _sqrt_optional(self.epistemic_variance)
+
+    @property
+    def predictive_std(self) -> float | None:
+        return _sqrt_optional(self.predictive_variance)
+
+    @property
+    def lower_95(self) -> float | None:
+        std = self.predictive_std
+        return None if std is None else self.prediction - 1.96 * std
+
+    @property
+    def upper_95(self) -> float | None:
+        std = self.predictive_std
+        return None if std is None else self.prediction + 1.96 * std
+
+
+def _sqrt_optional(value: float | None) -> float | None:
+    return None if value is None else math.sqrt(max(value, 0.0))
 
 
 @dataclass(frozen=True)
@@ -130,8 +159,23 @@ def _batch_records(outputs: RxnResidOutput, batch: RxnResidBatch) -> list[Predic
         .cpu()
         .tolist()
     )
+    uncertainty_names = (
+        "aleatoric_variance",
+        "epistemic_variance",
+        "predictive_variance",
+    )
+    uncertainty_tensors = tuple(getattr(outputs, name, None) for name in uncertainty_names)
+    uncertainty_values: list[list[float]] | None = None
+    if all(isinstance(value, Tensor) for value in uncertainty_tensors):
+        uncertainty_values = (
+            torch.stack(cast(tuple[Tensor, ...], uncertainty_tensors), dim=1)
+            .detach()
+            .float()
+            .cpu()
+            .tolist()
+        )
     records: list[PredictionRecord] = []
-    for path_id, row in zip(batch.path_ids, values, strict=True):
+    for path_index, (path_id, row) in enumerate(zip(batch.path_ids, values, strict=True)):
         target, baseline_value, residual_value, baseline_target, residual_target, group = row
         group_index = int(group)
         records.append(
@@ -145,6 +189,15 @@ def _batch_records(outputs: RxnResidOutput, batch: RxnResidBatch) -> list[Predic
                 residual=residual_value,
                 baseline_target=baseline_target,
                 residual_target=residual_target,
+                aleatoric_variance=(
+                    uncertainty_values[path_index][0] if uncertainty_values is not None else None
+                ),
+                epistemic_variance=(
+                    uncertainty_values[path_index][1] if uncertainty_values is not None else None
+                ),
+                predictive_variance=(
+                    uncertainty_values[path_index][2] if uncertainty_values is not None else None
+                ),
             )
         )
     return records

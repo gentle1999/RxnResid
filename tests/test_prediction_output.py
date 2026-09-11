@@ -14,6 +14,9 @@ def _record(path_id: str) -> PredictionRecord:
         target=3.0,
         baseline=1.5,
         residual=0.5,
+        aleatoric_variance=1.0,
+        epistemic_variance=3.0,
+        predictive_variance=4.0,
     )
 
 
@@ -30,6 +33,8 @@ def test_prediction_rows_are_sorted_by_numeric_component_ids() -> None:
     assert [row["path_id"] for row in rows] == ["2", "10", "1"]
     assert rows[0]["ene_id"] == "2"
     assert rows[0]["prediction"] == rows[0]["baseline"] + rows[0]["residual"]
+    assert rows[0]["predictive_std"] == 2.0
+    assert rows[0]["lower_95"] == 2.0 - 1.96 * 2.0
 
 
 def test_grouped_prediction_loader_does_not_split_route_sets() -> None:

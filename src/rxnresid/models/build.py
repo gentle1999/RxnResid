@@ -88,6 +88,7 @@ def build_model(
                 mapping_dropout=model_config.mapping.dropout,
                 product_group_head=model_config.baseline_head,
                 route_head=model_config.residual_head,
+                evidence_head=model_config.evidence_head,
             ),
         )
     )

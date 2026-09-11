@@ -43,6 +43,7 @@ model:
   mapping: {mode: latent_diff, hidden_dim: 64, dropout: 0.05}
   baseline_head: {hidden_dims: [96]}
   residual_head: {hidden_dims: [96]}
+  evidence_head: {hidden_dims: [96]}
 
 loss:
   absolute: 1.0
@@ -52,6 +53,9 @@ loss:
   center_residual: false
   baseline_group_balanced: true
   residual_group_balanced: false
+  evidential: 1.0
+  evidence_regularizer: 0.01
+  residual_center: 0.05
   huber_beta: 0.1
 
 training:

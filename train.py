@@ -213,6 +213,9 @@ def _loss_weights(config: ProjectConfig) -> LossWeights:
         residual_group_balanced=config.loss.residual_group_balanced,
         residual_multi_path_only=config.loss.residual_multi_path_only,
         baseline_auxiliary_unblended=config.loss.baseline_auxiliary_unblended,
+        evidential=config.loss.evidential,
+        evidence_regularizer=config.loss.evidence_regularizer,
+        residual_center=config.loss.residual_center,
         baseline_huber_beta=config.loss.baseline_huber_beta,
         residual_huber_beta=config.loss.residual_huber_beta,
     )
@@ -227,11 +230,18 @@ def _phase_weights(
         for phase in (
             (
                 config.training.baseline_pretrain_epochs,
-                replace(weights, absolute=0.0, residual=0.0, pairwise=0.0),
+                replace(
+                    weights,
+                    absolute=0.0,
+                    residual=0.0,
+                    pairwise=0.0,
+                    evidential=0.0,
+                    residual_center=0.0,
+                ),
             ),
             (
                 config.training.baseline_pretrain_epochs + config.training.residual_pretrain_epochs,
-                replace(weights, absolute=0.0, baseline=0.0),
+                replace(weights, absolute=0.0, baseline=0.0, evidential=0.0),
             ),
         )
         if phase[0] > 0

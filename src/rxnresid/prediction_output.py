@@ -32,6 +32,11 @@ def prediction_rows(
             {
                 **{column: metadata[column] for column in component_id_columns},
                 **asdict(record),
+                "aleatoric_std": record.aleatoric_std,
+                "epistemic_std": record.epistemic_std,
+                "predictive_std": record.predictive_std,
+                "lower_95": record.lower_95,
+                "upper_95": record.upper_95,
             }
         )
     if component_id_columns:
@@ -67,6 +72,14 @@ def write_prediction_csv(
                 "residual",
                 "baseline_target",
                 "residual_target",
+                "aleatoric_variance",
+                "epistemic_variance",
+                "predictive_variance",
+                "aleatoric_std",
+                "epistemic_std",
+                "predictive_std",
+                "lower_95",
+                "upper_95",
             ],
         )
         writer.writeheader()

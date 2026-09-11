@@ -143,6 +143,7 @@ class ModelConfig:
     mapping: MappingConfig = field(default_factory=MappingConfig)
     baseline_head: HeadConfig = field(default_factory=HeadConfig)
     residual_head: HeadConfig = field(default_factory=HeadConfig)
+    evidence_head: HeadConfig = field(default_factory=HeadConfig)
 
     @classmethod
     def from_mapping(cls, value: Any) -> ModelConfig:
@@ -195,6 +196,7 @@ class ModelConfig:
             mapping=MappingConfig.from_mapping(mapping.get("mapping")),
             baseline_head=_head_config(mapping.get("baseline_head")),
             residual_head=_head_config(mapping.get("residual_head")),
+            evidence_head=_head_config(mapping.get("evidence_head")),
         )
 
 
@@ -209,6 +211,9 @@ class LossConfig:
     residual_group_balanced: bool = False
     residual_multi_path_only: bool = False
     baseline_auxiliary_unblended: bool = False
+    evidential: float = 1.0
+    evidence_regularizer: float = 0.01
+    residual_center: float = 0.05
     huber_beta: float = 1.0
     baseline_huber_beta: float | None = None
     residual_huber_beta: float | None = None
@@ -226,6 +231,9 @@ class LossConfig:
             residual_group_balanced=bool(mapping.get("residual_group_balanced", False)),
             residual_multi_path_only=bool(mapping.get("residual_multi_path_only", False)),
             baseline_auxiliary_unblended=bool(mapping.get("baseline_auxiliary_unblended", False)),
+            evidential=float(mapping.get("evidential", 1.0)),
+            evidence_regularizer=float(mapping.get("evidence_regularizer", 0.01)),
+            residual_center=float(mapping.get("residual_center", 0.05)),
             huber_beta=float(mapping.get("huber_beta", 1.0)),
             baseline_huber_beta=(
                 float(mapping["baseline_huber_beta"])
@@ -238,7 +246,18 @@ class LossConfig:
                 else None
             ),
         )
-        if min(config.absolute, config.baseline, config.residual, config.pairwise) < 0.0:
+        if (
+            min(
+                config.absolute,
+                config.baseline,
+                config.residual,
+                config.pairwise,
+                config.evidential,
+                config.evidence_regularizer,
+                config.residual_center,
+            )
+            < 0.0
+        ):
             raise ValueError("loss weights must be non-negative")
         if config.huber_beta <= 0.0:
             raise ValueError("loss.huber_beta must be positive")
@@ -415,7 +434,7 @@ class ProjectConfig:
         )
         if not config.training.group_complete_batches:
             raise ValueError(
-                "RxnResid route centering requires training.group_complete_batches=true"
+                "RxnResid auxiliary group losses require training.group_complete_batches=true"
             )
         if config.data.baseline_reduction != "mean":
             raise ValueError("RxnResid requires data.baseline_reduction=mean")

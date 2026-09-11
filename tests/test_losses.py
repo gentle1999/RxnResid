@@ -40,6 +40,10 @@ def test_rxnresid_loss_returns_all_decomposition_terms() -> None:
         "loss_baseline",
         "loss_residual",
         "loss_pairwise",
+        "loss_residual_center",
+        "loss_evidential",
+        "loss_evidential_nll",
+        "loss_evidence_regularizer",
     }
     assert all(value.ndim == 0 and torch.isfinite(value) for value in losses.values())
 

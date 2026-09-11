@@ -1,4 +1,4 @@
-"""End-to-end low-rank pair surface with mean-centered route potentials."""
+"""End-to-end low-rank pair surface with path-wise evidential regression."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from rxnresid.data.protocols import PyGBatchStub
 from rxnresid.models.encoders import EncoderConfig, build_molecular_encoder
 from rxnresid.models.heads import HeadConfig
 from rxnresid.models.mapping.module import MappingMode, MappingModule
-from rxnresid.utils.scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
+from rxnresid.utils.scatter import scatter_mean, scatter_sum
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ class MeanPairSurfaceConfig:
 
 @dataclass(frozen=True)
 class MeanCenteredRouteConfig:
-    """Mapped path topology used to rank routes within a substrate pair."""
+    """Mapped path topology used to predict a concrete reaction path."""
 
     path_encoder: EncoderConfig = field(
         default_factory=lambda: EncoderConfig(type="gine_gatv2", pooling="sum")
@@ -55,6 +55,7 @@ class MeanCenteredRouteConfig:
     mapping_dropout: float = 0.05
     product_group_head: HeadConfig = field(default_factory=lambda: HeadConfig((96,)))
     route_head: HeadConfig = field(default_factory=lambda: HeadConfig((96,)))
+    evidence_head: HeadConfig = field(default_factory=lambda: HeadConfig((96,)))
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,9 @@ class MeanCenteredRouteOutput:
     path_node: Tensor
     delta: Tensor
     mapped: Tensor
+    evidence_nu: Tensor
+    evidence_alpha: Tensor
+    evidence_beta: Tensor
 
 
 @dataclass(frozen=True)
@@ -143,6 +147,24 @@ class RxnResidModelOutput(RxnResidOutput):
     delta_embedding: Tensor
     product_factor: Tensor
     mapping_embedding: Tensor
+    evidence_nu: Tensor
+    evidence_alpha: Tensor
+    evidence_beta: Tensor
+    aleatoric_variance: Tensor
+    epistemic_variance: Tensor
+    predictive_variance: Tensor
+
+    @property
+    def aleatoric_std(self) -> Tensor:
+        return torch.sqrt(self.aleatoric_variance)
+
+    @property
+    def epistemic_std(self) -> Tensor:
+        return torch.sqrt(self.epistemic_variance)
+
+    @property
+    def predictive_std(self) -> Tensor:
+        return torch.sqrt(self.predictive_variance)
 
     @property
     def ene_state(self) -> Tensor:
@@ -180,6 +202,7 @@ def _normalized_regression_head(
     input_dim: int,
     hidden_dims: tuple[int, ...],
     dropout: float,
+    output_dim: int = 1,
 ) -> nn.Sequential:
     layers: list[nn.Module] = []
     current_dim = input_dim
@@ -193,7 +216,7 @@ def _normalized_regression_head(
             )
         )
         current_dim = hidden_dim
-    layers.append(nn.Linear(current_dim, 1))
+    layers.append(nn.Linear(current_dim, output_dim))
     return nn.Sequential(*layers)
 
 
@@ -473,7 +496,7 @@ class MeanPairSurface(nn.Module):
 
 
 class MeanCenteredRouteModel(nn.Module):
-    """Predict path potentials and remove their substrate-group mean."""
+    """Predict signed path corrections and evidential parameters per reaction."""
 
     def __init__(
         self,
@@ -527,6 +550,12 @@ class MeanCenteredRouteModel(nn.Module):
             config.route_head.hidden_dims,
             dropout,
         )
+        self.evidence_head = _normalized_regression_head(
+            route_width,
+            config.evidence_head.hidden_dims,
+            dropout,
+            output_dim=3,
+        )
         self.product_group_head = (
             _normalized_regression_head(
                 rank * 4,
@@ -544,7 +573,10 @@ class MeanCenteredRouteModel(nn.Module):
         substrate_node: Tensor,
     ) -> MeanCenteredRouteOutput:
         path_encoded = self.path_encoder(batch.path_cgrs)
-        delta_encoded = self.delta_encoder(batch.path_delta_cgrs)
+        # The legacy delta graph depends on which alternative paths happen to be
+        # present. Encoding the absolute path twice keeps this branch checkpoint-
+        # compatible while making a reaction's output independent of its pool.
+        delta_encoded = self.delta_encoder(batch.path_cgrs)
         product_encoded = self.product_encoder(batch.products)
         mapping_output = self.mapping(
             batch.mapping,
@@ -600,35 +632,19 @@ class MeanCenteredRouteModel(nn.Module):
             ),
             dim=-1,
         )
-        potential = F.softplus(self.route_head(route_input).squeeze(-1))
-        route_center = scatter_mean(
-            potential,
-            batch.path_to_group,
-            dim_size=batch.num_groups,
-        )
-        standardized = potential - route_center[batch.path_to_group]
+        potential = self.route_head(route_input).squeeze(-1)
+        standardized = potential
+        raw_evidence = self.evidence_head(route_input).float()
+        evidence_nu = F.softplus(raw_evidence[:, 0]) + 1e-6
+        evidence_alpha = F.softplus(raw_evidence[:, 1]) + 1.0 + 1e-6
+        evidence_beta = F.softplus(raw_evidence[:, 2]) + 1e-6
         if self.product_group_head is None:
-            group_correction = pair.standardized.new_zeros((batch.num_groups,))
+            group_correction = pair.standardized.new_zeros((batch.num_paths,))
         else:
-            product_mean = scatter_mean(
-                product_factor,
-                batch.path_to_group,
-                dim_size=batch.num_groups,
-            )
-            product_min = scatter_min(
-                product_factor,
-                batch.path_to_group,
-                dim_size=batch.num_groups,
-            )
-            product_max = scatter_max(
-                product_factor,
-                batch.path_to_group,
-                dim_size=batch.num_groups,
-            )
-            substrate_context = pair.component_factors.sum(dim=1)
+            substrate_context = pair.component_factors.sum(dim=1)[batch.path_to_group]
             group_correction = self.product_group_head(
                 torch.cat(
-                    (product_mean, product_min, product_max, substrate_context),
+                    (product_factor, product_factor, product_factor, substrate_context),
                     dim=-1,
                 )
             ).squeeze(-1)
@@ -641,6 +657,9 @@ class MeanCenteredRouteModel(nn.Module):
             path_node=path_encoded.node,
             delta=delta_encoded.graph,
             mapped=mapped,
+            evidence_nu=evidence_nu,
+            evidence_alpha=evidence_alpha,
+            evidence_beta=evidence_beta,
         )
 
 
@@ -712,13 +731,21 @@ class RxnResidModel(nn.Module):
             pair_output,
             pair_output.node,
         )
-        neural_baseline_standardized = pair_output.standardized + route_output.group_correction
-        baseline_standardized = neural_baseline_standardized[batch.path_to_group]
+        neural_baseline_standardized = (
+            pair_output.standardized[batch.path_to_group] + route_output.group_correction
+        )
+        baseline_standardized = neural_baseline_standardized
         baseline = self.baseline_mean + self.baseline_scale * baseline_standardized
         residual_standardized = route_output.standardized
         residual = self.residual_mean + self.residual_scale * residual_standardized
         prediction = baseline + residual
         prediction_standardized = (prediction - self.target_mean) / self.target_scale
+        aleatoric_standardized = route_output.evidence_beta / (route_output.evidence_alpha - 1.0)
+        epistemic_standardized = aleatoric_standardized / route_output.evidence_nu
+        variance_scale = self.target_scale.float().square()
+        aleatoric_variance = aleatoric_standardized * variance_scale
+        epistemic_variance = epistemic_standardized * variance_scale
+        predictive_variance = aleatoric_variance + epistemic_variance
         return RxnResidModelOutput(
             prediction=prediction,
             prediction_standardized=prediction_standardized,
@@ -744,6 +771,12 @@ class RxnResidModel(nn.Module):
             delta_embedding=route_output.delta,
             product_factor=route_output.product_factor,
             mapping_embedding=route_output.mapped,
+            evidence_nu=route_output.evidence_nu,
+            evidence_alpha=route_output.evidence_alpha,
+            evidence_beta=route_output.evidence_beta,
+            aleatoric_variance=aleatoric_variance,
+            epistemic_variance=epistemic_variance,
+            predictive_variance=predictive_variance,
         )
 
 

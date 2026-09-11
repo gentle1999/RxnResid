@@ -5,7 +5,7 @@ import torch
 from rdkit import Chem
 from torch_geometric.data import Batch
 
-from rxnresid.data.collate import collate_reaction_groups
+from rxnresid.data.collate import collate_reaction_groups, collate_reaction_paths
 from rxnresid.data.dataset import ReactionGroupDataset, TargetStatistics
 from rxnresid.data.featurizer import molecules_to_graph
 from rxnresid.models.encoders import EncoderConfig
@@ -18,7 +18,6 @@ from rxnresid.models.rxnresid import (
     RxnResidModel,
     RxnResidModelOutput,
 )
-from rxnresid.utils.scatter import scatter_mean
 from tests.helpers import sample_of_size, tiny_rxnresid_model
 
 
@@ -26,7 +25,7 @@ def _batch():  # type: ignore[no-untyped-def]
     return collate_reaction_groups([sample_of_size(size) for size in (3, 2, 1)])
 
 
-def test_rxnresid_decomposes_every_path_into_group_baseline_and_centered_residual() -> None:
+def test_rxnresid_decomposes_every_path_and_emits_evidential_uncertainty() -> None:
     torch.manual_seed(3)
     batch = _batch()
     model = tiny_rxnresid_model()
@@ -34,16 +33,19 @@ def test_rxnresid_decomposes_every_path_into_group_baseline_and_centered_residua
 
     assert is_dataclass(output)
     assert isinstance(output, RxnResidModelOutput)
-    group_baseline = scatter_mean(output.baseline, batch.path_to_group, batch.num_groups)
-    group_residual = scatter_mean(
-        output.residual_standardized, batch.path_to_group, batch.num_groups
-    )
     assert output.prediction.shape == (batch.num_paths,)
     assert torch.equal(output.prediction, output.baseline + output.residual)
-    assert torch.allclose(output.baseline, group_baseline[batch.path_to_group])
-    assert torch.allclose(group_residual, torch.zeros_like(group_residual), atol=1e-6)
     assert output.mapping_embedding.shape == (batch.num_paths, 8)
-    assert output.product_group_correction.shape == (batch.num_groups,)
+    assert output.product_group_correction.shape == (batch.num_paths,)
+    assert torch.all(output.evidence_nu > 0.0)
+    assert torch.all(output.evidence_alpha > 1.0)
+    assert torch.all(output.evidence_beta > 0.0)
+    assert torch.all(output.aleatoric_variance > 0.0)
+    assert torch.all(output.epistemic_variance > 0.0)
+    assert torch.allclose(
+        output.predictive_variance,
+        output.aleatoric_variance + output.epistemic_variance,
+    )
 
 
 def test_rxnresid_route_and_pair_branches_receive_gradients() -> None:
@@ -118,10 +120,46 @@ def test_rxnresid_target_scaling_preserves_physical_decomposition() -> None:
     assert torch.equal(output.prediction, output.baseline + output.residual)
 
 
-def test_rxnresid_singleton_route_has_zero_centered_residual() -> None:
+def test_rxnresid_single_reaction_output_is_independent_of_group_context() -> None:
+    sample = sample_of_size(3)
+    full_batch = collate_reaction_groups([sample])
+    single_batch = collate_reaction_paths([sample.path_samples()[0]])
+    model = tiny_rxnresid_model().eval()
+
+    full = model(full_batch)
+    single = model(single_batch)
+
+    for name in (
+        "prediction",
+        "baseline",
+        "residual",
+        "aleatoric_variance",
+        "epistemic_variance",
+        "predictive_variance",
+    ):
+        assert torch.allclose(getattr(full, name)[0], getattr(single, name)[0], atol=1e-6)
+
+
+def test_uncertainty_variances_are_reported_in_physical_target_units() -> None:
     batch = collate_reaction_groups([sample_of_size(1)])
-    output = tiny_rxnresid_model()(batch)
-    assert torch.allclose(output.residual_standardized, torch.zeros(1), atol=1e-7)
+    model = tiny_rxnresid_model()
+    output_unit_scale = model(batch)
+    model.set_target_statistics(
+        TargetStatistics(
+            target_mean=25.0,
+            target_std=5.0,
+            baseline_mean=20.0,
+            baseline_std=2.0,
+            residual_mean=0.0,
+            residual_std=1.5,
+        )
+    )
+    output_scaled = model(batch)
+
+    assert torch.allclose(
+        output_scaled.predictive_variance,
+        25.0 * output_unit_scale.predictive_variance,
+    )
 
 
 def test_rxnresid_rejects_route_id_outside_configured_vocabulary() -> None:

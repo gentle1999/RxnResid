@@ -24,6 +24,9 @@ class LossWeights:
     residual_group_balanced: bool = False
     residual_multi_path_only: bool = False
     baseline_auxiliary_unblended: bool = False
+    evidential: float = 1.0
+    evidence_regularizer: float = 0.01
+    residual_center: float = 0.05
     baseline_huber_beta: float | None = None
     residual_huber_beta: float | None = None
 
@@ -84,6 +87,32 @@ def pairwise_gap_loss(
     return torch.stack(group_losses).mean()
 
 
+def normal_inverse_gamma_loss(
+    prediction: Tensor,
+    target: Tensor,
+    nu: Tensor,
+    alpha: Tensor,
+    beta: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Return path-wise Student-t NLL and evidential regularization terms."""
+    prediction = prediction.float()
+    target = target.float()
+    nu = nu.float()
+    alpha = alpha.float()
+    beta = beta.float()
+    omega = 2.0 * beta * (1.0 + nu)
+    squared_error = (target - prediction).square()
+    nll = (
+        0.5 * (torch.log(torch.as_tensor(torch.pi, device=nu.device)) - torch.log(nu))
+        - alpha * torch.log(omega)
+        + (alpha + 0.5) * torch.log(nu * squared_error + omega)
+        + torch.lgamma(alpha)
+        - torch.lgamma(alpha + 0.5)
+    )
+    regularizer = torch.abs(target - prediction) * (2.0 * nu + alpha)
+    return nll, regularizer
+
+
 def rxnresid_loss(
     outputs: RxnResidOutput,
     batch: RxnResidBatch,
@@ -96,7 +125,7 @@ def rxnresid_loss(
     residual_beta = weights.residual_huber_beta or beta
     target = (batch.energies - outputs.target_mean) / outputs.target_scale
     baseline = (
-        outputs.neural_baseline_standardized[batch.path_to_group]
+        outputs.neural_baseline_standardized
         if weights.baseline_auxiliary_unblended and isinstance(outputs, RxnResidModelOutput)
         else outputs.baseline_standardized
     )
@@ -156,6 +185,15 @@ def rxnresid_loss(
         )
     else:
         loss_residual = residual_path.mean()
+    loss_residual_center = (
+        scatter_mean(
+            outputs.residual_standardized,
+            batch.path_to_group,
+            dim_size=batch.num_groups,
+        )
+        .square()
+        .mean()
+    )
     loss_pairwise = (
         pairwise_gap_loss(
             residual,
@@ -167,11 +205,30 @@ def rxnresid_loss(
         if weights.pairwise > 0.0
         else prediction.sum() * 0.0
     )
+    if isinstance(outputs, RxnResidModelOutput):
+        evidential_path, evidence_regularizer_path = normal_inverse_gamma_loss(
+            prediction,
+            target,
+            outputs.evidence_nu,
+            outputs.evidence_alpha,
+            outputs.evidence_beta,
+        )
+        loss_evidential_nll = evidential_path.mean()
+        loss_evidence_regularizer = evidence_regularizer_path.mean()
+        loss_evidential = (
+            loss_evidential_nll + weights.evidence_regularizer * loss_evidence_regularizer
+        )
+    else:
+        loss_evidential_nll = prediction.sum() * 0.0
+        loss_evidence_regularizer = prediction.sum() * 0.0
+        loss_evidential = prediction.sum() * 0.0
     total = (
         weights.absolute * loss_absolute
         + weights.baseline * loss_baseline
         + weights.residual * loss_residual
         + weights.pairwise * loss_pairwise
+        + weights.residual_center * loss_residual_center
+        + weights.evidential * loss_evidential
     )
     return {
         "loss": total,
@@ -179,6 +236,10 @@ def rxnresid_loss(
         "loss_baseline": loss_baseline,
         "loss_residual": loss_residual,
         "loss_pairwise": loss_pairwise,
+        "loss_residual_center": loss_residual_center,
+        "loss_evidential": loss_evidential,
+        "loss_evidential_nll": loss_evidential_nll,
+        "loss_evidence_regularizer": loss_evidence_regularizer,
     }
 
 
