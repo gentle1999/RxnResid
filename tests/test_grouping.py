@@ -21,6 +21,12 @@ def test_stereochemistry_changes_reactant_group_key() -> None:
     assert group_id_from_reaction(left) != group_id_from_reaction(right)
 
 
+def test_non_equivalent_mapped_double_bond_stereo_changes_group_key() -> None:
+    left = r"[F:1]/[C:2]=[C:3]/[F:4]>>[F:1]/[C:2]=[C:3]/[F:4]"
+    right = r"[F:1]/[C:2]=[C:3]\[F:4]>>[F:1]/[C:2]=[C:3]\[F:4]"
+    assert group_id_from_reaction(left) != group_id_from_reaction(right)
+
+
 def test_configured_conditions_change_group_id() -> None:
     assert group_id_from_reaction(REACTION, {"solvent": "THF"}) != group_id_from_reaction(
         REACTION,

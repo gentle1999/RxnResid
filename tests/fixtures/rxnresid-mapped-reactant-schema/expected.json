@@ -1,0 +1,121 @@
+{
+  "schema": "tricycle.rxnresid-mapped-reactant-schema-fixture/v1",
+  "source_revision": "9deebde39b38df1085dbac3a379c2a59edd7c97d",
+  "purpose": "Preserve one substrate group containing complete paths whose canonical unmapped reactants match but whose exact mapped reactant stereo schemas differ.",
+  "source_conflict_summary": {
+    "autode": {
+      "collection_rows": 1822,
+      "inconsistent_unmapped_groups": 81,
+      "rows_in_inconsistent_groups": 168
+    },
+    "dpa-fined-rits-da": {
+      "collection_rows": 3045,
+      "inconsistent_unmapped_groups": 18,
+      "rows_in_inconsistent_groups": 36
+    },
+    "rits-zero-shot-da": {
+      "collection_rows": 1892,
+      "inconsistent_unmapped_groups": 43,
+      "rows_in_inconsistent_groups": 86
+    }
+  },
+  "cases": [
+    {
+      "name": "autode",
+      "file": "autode.csv",
+      "source_mapped_reaction_ids": [
+        "01a09272-4469-73e1-9f52-0caf5808d0ae",
+        "01a0927c-818a-7297-989c-60426ec515a7"
+      ],
+      "ene_id": "000095707752",
+      "diene_id": "000006184829",
+      "row_count": 2,
+      "group_count": 1,
+      "path_count": 2,
+      "distinct_exact_mapped_reactant_schema_count": 2,
+      "reactant_double_bond_stereo_by_path": [
+        [
+          [2, 4, "STEREOE"],
+          [7, 10, "STEREOE"],
+          [12, 14, "STEREOZ"]
+        ],
+        [
+          [2, 4, "STEREOE"],
+          [7, 10, "STEREOZ"],
+          [12, 14, "STEREOE"]
+        ]
+      ],
+      "activation_free_energies_kcal_mol": [
+        40.13989853,
+        40.1317409
+      ]
+    },
+    {
+      "name": "dpa-fined-rits-da",
+      "file": "dpa-fined-rits-da.csv",
+      "source_mapped_reaction_ids": [
+        "01a09bd2-12d7-7447-b16c-c6781db9d2eb",
+        "01a09bd2-1bbc-7905-8867-c3f6e8ace1be"
+      ],
+      "ene_id": "000017263645",
+      "diene_id": "000103643031",
+      "row_count": 2,
+      "group_count": 1,
+      "path_count": 2,
+      "distinct_exact_mapped_reactant_schema_count": 2,
+      "reactant_double_bond_stereo_by_path": [
+        [
+          [2, 3, "STEREOE"],
+          [8, 9, "STEREOE"],
+          [11, 13, "STEREOZ"]
+        ],
+        [
+          [2, 3, "STEREOE"],
+          [8, 9, "STEREOZ"],
+          [11, 13, "STEREOE"]
+        ]
+      ],
+      "activation_free_energies_kcal_mol": [
+        36.43508259,
+        36.4357101
+      ]
+    },
+    {
+      "name": "rits-zero-shot-da",
+      "file": "rits-zero-shot-da.csv",
+      "source_mapped_reaction_ids": [
+        "01a0aacf-da8b-7ceb-b4fd-236fe3e9a0b4",
+        "01a0ab2d-7699-7a06-82af-8f2337ccec73"
+      ],
+      "ene_id": "000001703063",
+      "diene_id": "000006184829",
+      "row_count": 2,
+      "group_count": 1,
+      "path_count": 2,
+      "distinct_exact_mapped_reactant_schema_count": 2,
+      "reactant_double_bond_stereo_by_path": [
+        [
+          [12, 13, "STEREOE"],
+          [14, 15, "STEREOZ"]
+        ],
+        [
+          [12, 13, "STEREOZ"],
+          [14, 15, "STEREOE"]
+        ]
+      ],
+      "activation_free_energies_kcal_mol": [
+        47.1592195,
+        41.74946033
+      ]
+    }
+  ],
+  "compatibility_assertions": {
+    "rows_loaded": 2,
+    "groups_loaded": 1,
+    "paths_in_group": 2,
+    "anomalies": 0,
+    "preserve_path_targets": true,
+    "preserve_path_products": true,
+    "do_not_split_group": true
+  }
+}

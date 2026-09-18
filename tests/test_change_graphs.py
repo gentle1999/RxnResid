@@ -59,6 +59,20 @@ def test_change_graph_rejects_inconsistent_group_reactants() -> None:
         reaction_change_graphs([parse_mapped_reaction(FORMING), inconsistent])
 
 
+def test_change_graph_rejects_incompatible_mapped_bond_topology() -> None:
+    first = parse_mapped_reaction("[CH3:1][CH2:2].[CH3:3][CH2:4]>>[CH3:1][CH2:2].[CH3:3][CH2:4]")
+    second = parse_mapped_reaction("[CH3:1][CH2:2][CH3:3].[CH2:4]>>[CH3:1][CH2:2][CH3:3].[CH2:4]")
+    with pytest.raises(ValueError, match="incompatible unmapped reactant structure/topology"):
+        reaction_change_graphs([first, second])
+
+
+def test_change_graph_rejects_non_equivalent_reactant_stereo() -> None:
+    first = parse_mapped_reaction(r"[F:1]/[C:2]=[C:3]/[F:4]>>[F:1]/[C:2]=[C:3]/[F:4]")
+    second = parse_mapped_reaction(r"[F:1]/[C:2]=[C:3]\[F:4]>>[F:1]/[C:2]=[C:3]\[F:4]")
+    with pytest.raises(ValueError, match="non-equivalent reactant stereo"):
+        reaction_change_graphs([first, second])
+
+
 def test_change_graph_requires_complete_mapping() -> None:
     incomplete = parse_mapped_reaction("[CH3:1].O>>[CH3:1]O")
     with pytest.raises(ValueError, match="every reactant atom"):

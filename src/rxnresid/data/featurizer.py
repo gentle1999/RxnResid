@@ -69,14 +69,21 @@ def split_component_graphs(graph: Data) -> tuple[Data, ...]:
     return tuple(components)
 
 
-def component_token_id(mol: Chem.Mol, num_buckets: int = COMPONENT_HASH_BUCKETS) -> int:
+def component_token_id(
+    mol: Chem.Mol,
+    num_buckets: int = COMPONENT_HASH_BUCKETS,
+    *,
+    isomeric_smiles: bool = True,
+) -> int:
     """Return a stable structure token while reserving zero for unknowns."""
     if num_buckets < 2:
         raise ValueError("num_buckets must reserve at least one known-component bucket")
     canonical = Chem.Mol(mol)
     for atom in canonical.GetAtoms():
         atom.SetAtomMapNum(0)
-    smiles = Chem.MolToSmiles(canonical, canonical=True, isomericSmiles=True)
+    if not isomeric_smiles:
+        Chem.RemoveStereochemistry(canonical)
+    smiles = Chem.MolToSmiles(canonical, canonical=True, isomericSmiles=isomeric_smiles)
     digest = hashlib.sha1(smiles.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") % (num_buckets - 1) + 1
 
@@ -118,6 +125,7 @@ ATOM_FEATURE_DIM = len(atom_feature(Chem.MolFromSmiles("C").GetAtomWithIdx(0)))
 EDGE_FEATURE_DIM = len(bond_feature(Chem.MolFromSmiles("C=C").GetBondWithIdx(0)))
 BOND_TYPE_FEATURE_DIM = len(_BOND_TYPES) + 1
 BOND_STEREO_FEATURE_DIM = len(_BOND_STEREO) + 1
+ATOM_STEREO_FEATURE_DIM = len(_CHIRAL_TAGS) + 1 + len(_CIP_CODES) + 1
 
 
 def molecules_to_graph(
@@ -183,6 +191,7 @@ def reaction_graphs(
 
 __all__ = [
     "ATOM_FEATURE_DIM",
+    "ATOM_STEREO_FEATURE_DIM",
     "BOND_STEREO_FEATURE_DIM",
     "BOND_TYPE_FEATURE_DIM",
     "COMPONENT_HASH_BUCKETS",

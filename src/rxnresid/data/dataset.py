@@ -33,7 +33,7 @@ from rxnresid.data.protocols import PyGDataStub
 from rxnresid.data.reaction_parser import ParsedReaction, parse_mapped_reaction
 
 
-DATASET_CACHE_SCHEMA_VERSION = 4
+DATASET_CACHE_SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -58,6 +58,27 @@ class ReactionRow:
     route_id: int
     parsed: ParsedReaction
     metadata: dict[str, str]
+
+
+def _normalize_graph_atom_maps(
+    graph: Data,
+    source_map_to_coordinate: dict[int, int],
+    *,
+    path_id: str,
+) -> Data:
+    """Copy a path graph with map labels in the shared group coordinate."""
+    normalized = graph.clone()
+    source_maps = [int(map_number) for map_number in graph.atom_map_numbers.tolist()]
+    try:
+        coordinate_maps = [source_map_to_coordinate[map_number] for map_number in source_maps]
+    except KeyError as exc:
+        raise ValueError(
+            f"Path {path_id} has a product atom map absent from its normalized reactants"
+        ) from exc
+    if len(set(coordinate_maps)) != len(coordinate_maps):
+        raise ValueError(f"Path {path_id} has a non-bijective normalized product mapping")
+    normalized.atom_map_numbers = torch.tensor(coordinate_maps, dtype=torch.long)
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -111,6 +132,7 @@ class ReactionGroupSample:
     route_ids: Tensor
     path_ids: list[str]
     mappings: list[ParsedReaction]
+    path_source_map_to_coordinate: tuple[dict[int, int], ...] = ()
 
     def __len__(self) -> int:
         return len(self.products)
@@ -134,6 +156,11 @@ class ReactionGroupSample:
                 route_id=int(self.route_ids[path_index].item()),
                 path_id=self.path_ids[path_index],
                 mapping=self.mappings[path_index],
+                source_map_to_coordinate=(
+                    self.path_source_map_to_coordinate[path_index]
+                    if self.path_source_map_to_coordinate
+                    else None
+                ),
             )
             for path_index in range(len(self))
         )
@@ -158,6 +185,7 @@ class ReactionPathSample:
     route_id: int
     path_id: str
     mapping: ParsedReaction
+    source_map_to_coordinate: dict[int, int] | None = None
 
 
 @dataclass
@@ -221,8 +249,6 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         group_targets: dict[str, list[float]] = {}
         group_route_ids: dict[str, list[int]] = {}
         group_reactants: dict[str, Data] = {}
-        group_components: dict[str, tuple[Data, ...]] = {}
-        group_component_keys: dict[str, tuple[str, ...]] = {}
         group_keys: dict[str, str] = {}
         seen_path_ids: set[str] = set()
 
@@ -282,10 +308,6 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
             seen_path_ids.add(path_id)
             if group_id not in group_reactants:
                 group_reactants[group_id] = reactant_graph
-                group_components[group_id] = split_component_graphs(reactant_graph)
-                group_component_keys[group_id] = tuple(
-                    mapped_component_key(molecule) for molecule in parsed.reactant_mols
-                )
                 group_keys[group_id] = group_key
                 group_parsed[group_id] = []
                 group_products[group_id] = []
@@ -324,6 +346,24 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         self._samples: list[ReactionGroupSample] = []
         for group_id in self.group_ids:
             change_graphs = reaction_change_graphs(group_parsed[group_id])
+            reference_index = change_graphs.reference_path_index
+            reference_mapping = group_parsed[group_id][reference_index]
+            reference_reactant, _ = reaction_graphs(
+                reference_mapping,
+                component_hash_buckets=self.component_hash_buckets,
+            )
+            reference_components = split_component_graphs(reference_reactant)
+            reference_component_keys = tuple(
+                mapped_component_key(molecule) for molecule in reference_mapping.reactant_mols
+            )
+            normalized_products = [
+                _normalize_graph_atom_maps(
+                    product,
+                    change_graphs.path_source_map_to_coordinate[path_index],
+                    path_id=group_paths[group_id][path_index],
+                )
+                for path_index, product in enumerate(group_products[group_id])
+            ]
             energies = torch.tensor(group_targets[group_id], dtype=torch.float32)
             baseline_target = float(energies.mean().item())
             self._samples.append(
@@ -334,16 +374,17 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                     ),
                     path_cgrs=change_graphs.paths,
                     path_delta_cgrs=change_graphs.deltas,
-                    reactant=group_reactants[group_id],
-                    components=group_components[group_id],
-                    component_keys=group_component_keys[group_id],
-                    products=group_products[group_id],
+                    reactant=reference_reactant,
+                    components=reference_components,
+                    component_keys=reference_component_keys,
+                    products=normalized_products,
                     energies=energies,
                     baseline_target=baseline_target,
                     residual_targets=energies - baseline_target,
                     route_ids=torch.tensor(group_route_ids[group_id], dtype=torch.long),
                     path_ids=group_paths[group_id],
                     mappings=group_parsed[group_id],
+                    path_source_map_to_coordinate=change_graphs.path_source_map_to_coordinate,
                 )
             )
         self.group_index = {group_id: index for index, group_id in enumerate(self.group_ids)}

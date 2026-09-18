@@ -279,23 +279,39 @@ def collate_reaction_paths(samples: list[ReactionPathSample]) -> RxnResidBatch:
         group_substrate_maps.append(group_maps)
     for path_index, sample in enumerate(samples):
         product_offset = int(products.ptr[path_index].item())
-        substrate_map_to_node = {
-            int(map_number): node_index
-            for node_index, map_number in enumerate(sample.reactant.atom_map_numbers.tolist())
-            if map_number > 0
-        }
         product_map_to_node = {
             int(map_number): node_index
             for node_index, map_number in enumerate(sample.product.atom_map_numbers.tolist())
             if map_number > 0
         }
-        common_maps = (
-            set(sample.mapping.atom_mapping) & set(product_map_to_node) & set(substrate_map_to_node)
-        )
-        present.append(float(bool(common_maps)))
-        for map_number in sorted(common_maps & set(sample.mapping.edits.reaction_center_maps)):
-            substrate_nodes.append(group_substrate_maps[path_to_group[path_index]][map_number])
-            product_nodes.append(product_offset + product_map_to_node[map_number])
+        source_map_to_coordinate = sample.source_map_to_coordinate or {
+            int(map_number): int(map_number) for map_number in sample.mapping.atom_mapping
+        }
+        source_to_product_node: dict[int, int] = {}
+        for source_map in sample.mapping.atom_mapping:
+            coordinate_map = source_map_to_coordinate.get(source_map)
+            if coordinate_map is not None and coordinate_map in product_map_to_node:
+                source_to_product_node[source_map] = product_map_to_node[coordinate_map]
+        common_source_maps = set(source_to_product_node)
+        coordinate_maps: dict[int, int] = {}
+        for source_map in common_source_maps:
+            if source_map not in source_map_to_coordinate:
+                raise ValueError(f"Path {sample.path_id} has no normalized atom map {source_map}")
+            coordinate_map = source_map_to_coordinate[source_map]
+            if coordinate_map not in group_substrate_maps[path_to_group[path_index]]:
+                raise ValueError(
+                    f"Path {sample.path_id} normalized atom map {coordinate_map} is absent "
+                    "from its group substrate"
+                )
+            coordinate_maps[source_map] = coordinate_map
+        present.append(float(bool(coordinate_maps)))
+        for source_map in sorted(
+            set(coordinate_maps) & set(sample.mapping.edits.reaction_center_maps)
+        ):
+            substrate_nodes.append(
+                group_substrate_maps[path_to_group[path_index]][coordinate_maps[source_map]]
+            )
+            product_nodes.append(product_offset + source_to_product_node[source_map])
             mapping_paths.append(path_index)
 
     mapping = MappingBatch(
