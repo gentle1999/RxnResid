@@ -93,6 +93,13 @@ Each fold directory contains the resolved configuration, split metadata,
 training history, predictions, metrics, and checkpoint. Existing completed
 folds are skipped when the scheduler is resumed.
 
+Training seeds Python, NumPy, and PyTorch and enables deterministic PyTorch
+algorithms. On CUDA, deterministic kernels are required where available; PyTorch
+will raise an error if an operation has no deterministic implementation. Repeat
+a run with the same seed, data, software versions, device, and distributed setup
+for comparable results; bitwise equality across different hardware or software
+versions is not guaranteed.
+
 ## Inference
 
 ```bash

@@ -11,7 +11,6 @@ from typing import Any, Protocol, cast
 
 import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedDataParallelKwargs
-from accelerate.utils import set_seed
 from torch.utils.data import DataLoader
 
 from rxnresid.config import (
@@ -33,6 +32,7 @@ from rxnresid.prediction_output import write_prediction_csv
 from rxnresid.training.losses import LossWeights
 from rxnresid.training.schedulers import build_scheduler
 from rxnresid.training.trainer import TrainingSummary, evaluate, fit, fit_fixed_epochs, predict
+from rxnresid.utils.reproducibility import set_deterministic_seed
 
 
 class TargetStatisticsModel(Protocol):
@@ -402,6 +402,7 @@ def _run_refit(args: argparse.Namespace) -> int:
     )
     device_setting = args.device or config.training.device
     mixed_precision = args.mixed_precision or resolved.mixed_precision
+    set_deterministic_seed(resolved.seed)
     accelerator = Accelerator(
         cpu=device_setting == "cpu",
         mixed_precision=mixed_precision,
@@ -419,7 +420,6 @@ def _run_refit(args: argparse.Namespace) -> int:
             split_batches=config.training.split_batches,
         ),
     )
-    set_seed(resolved.seed)
     dataset = ReactionGroupDataset(
         config.data.path,
         target_column=config.data.target_column,
@@ -618,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
     device_setting = args.device or config.training.device
     mixed_precision = args.mixed_precision or config.training.mixed_precision
     gradient_accumulation_steps = config.training.gradient_accumulation_steps
+    set_deterministic_seed(seed)
     accelerator = Accelerator(
         cpu=device_setting == "cpu",
         mixed_precision=mixed_precision,
@@ -635,7 +636,6 @@ def main(argv: list[str] | None = None) -> int:
             split_batches=config.training.split_batches,
         ),
     )
-    set_seed(seed)
     dataset = ReactionGroupDataset(
         config.data.path,
         target_column=config.data.target_column,
@@ -811,7 +811,7 @@ def main(argv: list[str] | None = None) -> int:
             beta=huber_beta,
         )
         accelerator.unwrap_model(model).load_state_dict(selection_result.best_state)
-        set_seed(seed)
+        set_deterministic_seed(seed)
         stage2_indices = [*split.train, *split.valid]
         stage2_dataset = ReactionPathDataset(dataset, stage2_indices)
         stage2_loader = _build_path_loader(
