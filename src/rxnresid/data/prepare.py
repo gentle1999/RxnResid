@@ -22,7 +22,9 @@ def prepare_table(
     target_column: str = "G_T_activate",
     reaction_column: str = "rxn_smiles",
     condition_columns: Sequence[str] = (),
+    path_id_column: str | None = None,
     route_id_column: str | None = None,
+    include_stereo: bool = True,
     baseline_reduction: Literal["mean"] = "mean",
     group_split: GroupSplit | None = None,
 ) -> dict[str, int]:
@@ -30,8 +32,10 @@ def prepare_table(
         input_path,
         target_column=target_column,
         reaction_column=reaction_column,
+        path_id_column=path_id_column,
         condition_columns=condition_columns,
         route_id_column=route_id_column,
+        include_stereo=include_stereo,
         baseline_reduction=baseline_reduction,
         on_error="record",
     )
@@ -63,7 +67,9 @@ def write_prepared_dataset(
     rows = dataset.processed_rows(labels)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(
+            handle, fieldnames=list(dict.fromkeys(key for row in rows for key in row))
+        )
         writer.writeheader()
         writer.writerows(rows)
     report = {
@@ -83,13 +89,15 @@ def write_prepared_dataset(
     with anomaly_output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["row_index", "path_id", "error_type", "message"],
+            fieldnames=["row_index", "csv_line_number", "path_id", "rule", "error_type", "message"],
         )
         writer.writeheader()
         writer.writerows(
             {
                 "row_index": anomaly.row_index,
+                "csv_line_number": anomaly.csv_line_number,
                 "path_id": anomaly.path_id,
+                "rule": anomaly.rule,
                 "error_type": anomaly.error_type,
                 "message": anomaly.message,
             }

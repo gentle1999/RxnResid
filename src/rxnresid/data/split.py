@@ -49,6 +49,8 @@ class SplitManifest:
     dataset_group_count: int
     dataset_fingerprint: str
     folds: tuple[FoldAssignment, ...]
+    dataset_row_count: int | None = None
+    dataset_record_fingerprint: str | None = None
 
     @classmethod
     def from_mapping(cls, value: Any) -> SplitManifest:
@@ -65,6 +67,12 @@ class SplitManifest:
             dataset_group_count=int(value["dataset_group_count"]),
             dataset_fingerprint=str(value["dataset_fingerprint"]),
             folds=tuple(FoldAssignment.from_mapping(fold) for fold in folds),
+            dataset_record_fingerprint=value.get("dataset_record_fingerprint"),
+            dataset_row_count=(
+                int(value["dataset_row_count"])
+                if value.get("dataset_row_count") is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,8 +83,18 @@ class SplitManifest:
             raise ValueError(f"Unsupported split manifest schema: {self.schema_version}")
         if self.dataset_group_count != len(dataset):
             raise ValueError("split manifest group count does not match dataset")
+        if self.dataset_row_count is not None and self.dataset_row_count != len(dataset.rows):
+            raise ValueError("split manifest row count does not match dataset snapshot")
         if self.dataset_fingerprint != dataset_group_fingerprint(dataset):
             raise ValueError("split manifest fingerprint does not match dataset")
+        if (
+            self.dataset_record_fingerprint is not None
+            and self.dataset_record_fingerprint != dataset_record_fingerprint(dataset)
+        ):
+            raise ValueError("split manifest record fingerprint does not match dataset snapshot")
+        fold_indices = [fold.fold_index for fold in self.folds]
+        if len(fold_indices) != self.num_folds or set(fold_indices) != set(range(self.num_folds)):
+            raise ValueError("split manifest contains missing or duplicate fold indices")
         try:
             fold = next(fold for fold in self.folds if fold.fold_index == fold_index)
         except StopIteration as exc:
@@ -87,6 +105,12 @@ class SplitManifest:
         test_ids = set(fold.test_group_ids)
         if train_ids & valid_ids or train_ids & test_ids or valid_ids & test_ids:
             raise ValueError("split manifest contains overlapping group assignments")
+        if (
+            len(train_ids) != len(fold.train_group_ids)
+            or len(valid_ids) != len(fold.valid_group_ids)
+            or len(test_ids) != len(fold.test_group_ids)
+        ):
+            raise ValueError("split manifest contains duplicate group assignments")
         if train_ids | valid_ids | test_ids != set(dataset.group_ids):
             raise ValueError("split manifest fold does not cover the dataset exactly")
         return GroupSplit(
@@ -162,6 +186,16 @@ def dataset_group_fingerprint(dataset: ReactionGroupDataset) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def dataset_record_fingerprint(dataset: ReactionGroupDataset) -> str:
+    """Bind a snapshot to its actual IDs, assignments, reactions and targets."""
+    records = sorted(
+        (row.path_id, row.group_id, row.raw_rxn_smiles, row.activation_energy)
+        for row in dataset.rows
+    )
+    payload = json.dumps(records, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def create_group_kfold_manifest(
     dataset: ReactionGroupDataset,
     num_folds: int = 10,
@@ -185,6 +219,8 @@ def create_group_kfold_manifest(
         dataset_group_count=len(dataset),
         dataset_fingerprint=dataset_group_fingerprint(dataset),
         folds=folds,
+        dataset_row_count=len(dataset.rows),
+        dataset_record_fingerprint=dataset_record_fingerprint(dataset),
     )
 
 

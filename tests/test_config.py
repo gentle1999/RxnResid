@@ -133,3 +133,19 @@ def test_rxnresid_rejects_incompatible_data_and_batch_configuration() -> None:
         )
     with pytest.raises(ValueError, match="model.variant"):
         ProjectConfig.from_mapping({"model": {"variant": "rxnresid_v10"}})
+
+
+def test_data_identity_policy_and_external_path_column() -> None:
+    import pytest
+
+    from rxnresid.config import DataConfig
+
+    config = DataConfig.from_mapping(
+        {"include_stereo": False, "path_id_column": "mapped_reaction_id"}
+    )
+    assert not config.include_stereo
+    assert config.path_id_column == "mapped_reaction_id"
+    with pytest.raises(ValueError, match="include_stereo"):
+        DataConfig.from_mapping({"include_stereo": "false"})
+    with pytest.raises(ValueError, match="path_id_column"):
+        DataConfig.from_mapping({"path_id_column": " "})

@@ -22,7 +22,7 @@ def test_reaction_graph_contains_features_and_map_numbers() -> None:
 
 def test_parser_preserves_stereo_and_mapping() -> None:
     parsed = parse_mapped_reaction(
-        "F[C@:1](Cl)(Br)I>>F[C@@:1](Cl)(Br)I",
+        "[F:2][C@:1]([Cl:3])([Br:4])[I:5]>>[F:2][C@@:1]([Cl:3])([Br:4])[I:5]",
         require_complete_mapping=True,
     )
     assert parsed.atom_mapping[1] == (1, 1)

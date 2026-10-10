@@ -10,10 +10,10 @@ import os
 import pickle
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal
 
 import torch
 from filelock import FileLock
@@ -21,7 +21,11 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
-from rxnresid.data.change_graphs import reaction_change_graphs
+from rxnresid.data.change_graphs import (
+    ALIGNMENT_VERSION,
+    align_mapped_reaction,
+    reaction_change_graphs,
+)
 from rxnresid.data.featurizer import (
     COMPONENT_HASH_BUCKETS,
     mapped_component_key,
@@ -29,11 +33,11 @@ from rxnresid.data.featurizer import (
     split_component_graphs,
 )
 from rxnresid.data.grouping import canonical_reactant_key, group_id_from_parsed, reaction_group_key
-from rxnresid.data.protocols import PyGDataStub
 from rxnresid.data.reaction_parser import ParsedReaction, parse_mapped_reaction
 
 
-DATASET_CACHE_SCHEMA_VERSION = 6
+DATASET_CACHE_SCHEMA_VERSION = 9
+ADAPTATION_VERSION = "rxnresid-data-contract-v2"
 
 
 @dataclass(frozen=True)
@@ -58,27 +62,22 @@ class ReactionRow:
     route_id: int
     parsed: ParsedReaction
     metadata: dict[str, str]
+    route_label: str = "0"
+    raw_rxn_smiles: str = ""
+    source_map_to_coordinate: dict[int, int] | None = None
+    alignment_hash: str = ""
+    aligned_rxn_smiles: str = ""
+    reference_path_id: str = ""
+    csv_line_number: int | None = None
+    adaptation_version: str = ADAPTATION_VERSION
 
 
-def _normalize_graph_atom_maps(
-    graph: Data,
-    source_map_to_coordinate: dict[int, int],
-    *,
-    path_id: str,
-) -> Data:
-    """Copy a path graph with map labels in the shared group coordinate."""
-    normalized = graph.clone()
-    source_maps = [int(map_number) for map_number in graph.atom_map_numbers.tolist()]
-    try:
-        coordinate_maps = [source_map_to_coordinate[map_number] for map_number in source_maps]
-    except KeyError as exc:
-        raise ValueError(
-            f"Path {path_id} has a product atom map absent from its normalized reactants"
-        ) from exc
-    if len(set(coordinate_maps)) != len(coordinate_maps):
-        raise ValueError(f"Path {path_id} has a non-bijective normalized product mapping")
-    normalized.atom_map_numbers = torch.tensor(coordinate_maps, dtype=torch.long)
-    return normalized
+class RecordValidationError(ValueError):
+    """A source-record failure with a stable rule for audit reports."""
+
+    def __init__(self, rule: str, message: str) -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 @dataclass(frozen=True)
@@ -89,6 +88,8 @@ class PreprocessingAnomaly:
     path_id: str
     error_type: str
     message: str
+    rule: str = "record_validation"
+    csv_line_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,8 @@ class ReactionGroupSample:
     path_ids: list[str]
     mappings: list[ParsedReaction]
     path_source_map_to_coordinate: tuple[dict[int, int], ...] = ()
+    route_labels: tuple[str, ...] = ()
+    path_aligned_mappings: tuple[ParsedReaction, ...] = ()
 
     def __len__(self) -> int:
         return len(self.products)
@@ -154,8 +157,16 @@ class ReactionGroupSample:
                 residual_target=float(self.residual_targets[path_index].item()),
                 group_size=len(self),
                 route_id=int(self.route_ids[path_index].item()),
+                route_label=(
+                    self.route_labels[path_index]
+                    if self.route_labels
+                    else str(self.route_ids[path_index].item())
+                ),
                 path_id=self.path_ids[path_index],
                 mapping=self.mappings[path_index],
+                aligned_mapping=(
+                    self.path_aligned_mappings[path_index] if self.path_aligned_mappings else None
+                ),
                 source_map_to_coordinate=(
                     self.path_source_map_to_coordinate[path_index]
                     if self.path_source_map_to_coordinate
@@ -186,6 +197,8 @@ class ReactionPathSample:
     path_id: str
     mapping: ParsedReaction
     source_map_to_coordinate: dict[int, int] | None = None
+    route_label: str = "0"
+    aligned_mapping: ParsedReaction | None = None
 
 
 @dataclass
@@ -195,6 +208,8 @@ class _DatasetCachePayload:
     rows: list[ReactionRow]
     anomalies: list[PreprocessingAnomaly]
     group_to_rows: dict[str, list[int]]
+    group_to_source_rows: dict[str, list[int]]
+    route_id_vocabulary: dict[str, int]
     group_ids: list[str]
     samples: list[ReactionGroupSample]
     group_index: dict[str, int]
@@ -212,6 +227,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         path_id_column: str | None = None,
         condition_columns: Sequence[str] = (),
         route_id_column: str | None = None,
+        route_id_vocabulary: dict[str, int] | None = None,
+        include_stereo: bool = True,
         baseline_reduction: Literal["mean"] = "mean",
         component_hash_buckets: int = COMPONENT_HASH_BUCKETS,
         on_error: Literal["raise", "record"] = "raise",
@@ -227,6 +244,10 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         self.reaction_column = reaction_column
         self.condition_columns = tuple(condition_columns)
         self.route_id_column = route_id_column
+        self._specified_route_id_vocabulary = (
+            dict(route_id_vocabulary) if route_id_vocabulary is not None else None
+        )
+        self.include_stereo = include_stereo
         self.baseline_reduction: Literal["mean"] = baseline_reduction
         self.component_hash_buckets = component_hash_buckets
         if not isinstance(source, list) and cache_dir is not None:
@@ -237,117 +258,181 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                 on_error=on_error,
             )
             return
-        rows = self._read_rows(source)
+        rows, csv_lines = self._read_rows(source)
         if not rows:
             raise ValueError("Input CSV contains no rows")
         self.anomalies: list[PreprocessingAnomaly] = []
         self.rows: list[ReactionRow] = []
         self.group_to_rows: dict[str, list[int]] = {}
+        self.group_to_source_rows: dict[str, list[int]] = {}
         group_parsed: dict[str, list[ParsedReaction]] = {}
-        group_products: dict[str, list[Data]] = {}
         group_paths: dict[str, list[str]] = {}
         group_targets: dict[str, list[float]] = {}
-        group_route_ids: dict[str, list[int]] = {}
-        group_reactants: dict[str, Data] = {}
+        group_route_labels: dict[str, list[str]] = {}
         group_keys: dict[str, str] = {}
         seen_path_ids: set[str] = set()
 
         for row_index, row in enumerate(rows):
-            path_id = self._path_id(row, row_index, path_id_column)
+            path_id = self._path_id(row, path_id_column)
             try:
-                reaction = row.get(reaction_column, "").strip()
+                if any(key is None or value is None for key, value in row.items()):
+                    raise RecordValidationError(
+                        "complete_csv_record", "CSV record has missing or extra fields"
+                    )
+                row = {key: str(value) for key, value in row.items()}
+                if not path_id.strip():
+                    raise RecordValidationError("nonempty_path_id", "empty path_id")
+                if path_id in seen_path_ids:
+                    raise RecordValidationError("unique_path_id", f"duplicate path id: {path_id}")
+                seen_path_ids.add(path_id)
+                raw_reaction = row.get(reaction_column, "")
+                reaction = raw_reaction.strip()
                 if not reaction:
-                    raise ValueError(f"empty {reaction_column!r}")
+                    raise RecordValidationError("nonempty_reaction", f"empty {reaction_column!r}")
                 raw_target = row.get(target_column, "").strip()
                 if not raw_target:
-                    raise ValueError(f"empty {target_column!r}")
+                    raise RecordValidationError("finite_target", f"empty {target_column!r}")
                 try:
                     target = float(raw_target)
                 except ValueError as exc:
-                    raise ValueError(f"non-numeric target: {raw_target!r}") from exc
+                    raise RecordValidationError(
+                        "finite_target", f"non-numeric target: {raw_target!r}"
+                    ) from exc
                 if not math.isfinite(target):
-                    raise ValueError("non-finite target")
-                if path_id in seen_path_ids:
-                    raise ValueError(f"duplicate path id: {path_id}")
+                    raise RecordValidationError("finite_target", "non-finite target")
                 conditions: dict[str, str] = {}
                 for column in self.condition_columns:
                     if column not in row or not row[column].strip():
-                        raise ValueError(f"missing configured condition {column!r}")
+                        raise RecordValidationError(
+                            "configured_condition", f"missing configured condition {column!r}"
+                        )
                     conditions[column] = row[column].strip()
-                route_id = 0
+                route_label = "0"
                 if self.route_id_column is not None:
-                    raw_route_id = row.get(self.route_id_column, "").strip()
-                    if not raw_route_id:
-                        raise ValueError(f"missing configured route id {self.route_id_column!r}")
-                    try:
-                        route_id_value = float(raw_route_id)
-                    except ValueError as exc:
-                        raise ValueError(f"non-numeric route id: {raw_route_id!r}") from exc
-                    if not route_id_value.is_integer() or route_id_value < 0:
-                        raise ValueError("route id must be a non-negative integer")
-                    route_id = int(route_id_value)
-                parsed = parse_mapped_reaction(reaction)
-                group_key = reaction_group_key(parsed, conditions)
-                group_id = group_id_from_parsed(parsed, conditions)
-                reactant_graph, product_graph = reaction_graphs(
-                    parsed,
-                    component_hash_buckets=self.component_hash_buckets,
+                    route_label = row.get(self.route_id_column, "")
+                    if not route_label.strip():
+                        raise RecordValidationError(
+                            "configured_route_id",
+                            f"missing configured route id {self.route_id_column!r}",
+                        )
+                parsed = parse_mapped_reaction(reaction, require_complete_mapping=True)
+                group_key = reaction_group_key(
+                    parsed, conditions, include_stereo=self.include_stereo
+                )
+                group_id = group_id_from_parsed(
+                    parsed, conditions, include_stereo=self.include_stereo
                 )
             except ValueError as exc:
+                rule = getattr(exc, "rule", "graph_features")
+                line = (
+                    f" (CSV line {csv_lines[row_index]})"
+                    if csv_lines[row_index] is not None
+                    else ""
+                )
+                message = f"Row {row_index} path_id {path_id!r}: [{rule}]{line} {exc}"
                 if on_error == "raise":
-                    raise ValueError(f"Row {row_index}: {exc}") from exc
+                    raise ValueError(message) from exc
                 self.anomalies.append(
                     PreprocessingAnomaly(
                         row_index=row_index,
                         path_id=path_id,
                         error_type=type(exc).__name__,
-                        message=str(exc),
+                        message=message,
+                        rule=rule,
+                        csv_line_number=csv_lines[row_index],
                     )
                 )
                 continue
-            seen_path_ids.add(path_id)
-            if group_id not in group_reactants:
-                group_reactants[group_id] = reactant_graph
+            if group_id not in group_keys:
                 group_keys[group_id] = group_key
                 group_parsed[group_id] = []
-                group_products[group_id] = []
                 group_paths[group_id] = []
                 group_targets[group_id] = []
-                group_route_ids[group_id] = []
+                group_route_labels[group_id] = []
                 self.group_to_rows[group_id] = []
+                self.group_to_source_rows[group_id] = []
             elif group_keys[group_id] != group_key:
                 raise RuntimeError(f"Group hash collision detected for {group_id}")
-            elif (
-                cast(PyGDataStub, group_reactants[group_id]).x.shape
-                != cast(PyGDataStub, reactant_graph).x.shape
-            ):
-                raise RuntimeError(f"Reactant graph mismatch inside group {group_id}")
             record = ReactionRow(
                 row_index=row_index,
                 path_id=path_id,
                 group_id=group_id,
                 mapped_rxn_smiles=reaction,
                 activation_energy=target,
-                route_id=route_id,
+                route_id=0,
                 parsed=parsed,
                 metadata=dict(row),
+                route_label=route_label,
+                raw_rxn_smiles=raw_reaction,
+                csv_line_number=csv_lines[row_index],
             )
             self.rows.append(record)
-            self.group_to_rows[group_id].append(row_index)
+            self.group_to_rows[group_id].append(len(self.rows) - 1)
+            self.group_to_source_rows[group_id].append(row_index)
             group_parsed[group_id].append(parsed)
-            group_products[group_id].append(product_graph)
             group_paths[group_id].append(path_id)
             group_targets[group_id].append(target)
-            group_route_ids[group_id].append(route_id)
+            group_route_labels[group_id].append(route_label)
 
         if not self.group_to_rows:
-            raise ValueError("Input contains no valid reaction rows")
+            details = "; ".join(anomaly.message for anomaly in self.anomalies[:3])
+            raise ValueError(f"Input contains no valid reaction rows: {details}")
+        labels = sorted({row.route_label for row in self.rows})
+        if self._specified_route_id_vocabulary is None:
+            self.route_id_vocabulary = {label: index for index, label in enumerate(labels)}
+        else:
+            self.route_id_vocabulary = self._specified_route_id_vocabulary
+            missing = set(labels) - set(self.route_id_vocabulary)
+            if missing:
+                raise ValueError(f"Route ID vocabulary is missing labels: {sorted(missing)}")
+            indices = list(self.route_id_vocabulary.values())
+            if any(not isinstance(index, int) or index < 0 for index in indices):
+                raise ValueError("Route ID vocabulary indices must be non-negative integers")
+            if len(set(indices)) != len(indices):
+                raise ValueError("Route ID vocabulary indices must be unique")
+        self.rows = [
+            replace(row, route_id=self.route_id_vocabulary[row.route_label]) for row in self.rows
+        ]
         self.group_ids = list(self.group_to_rows)
         self._samples: list[ReactionGroupSample] = []
         for group_id in self.group_ids:
-            change_graphs = reaction_change_graphs(group_parsed[group_id])
+            change_graphs = reaction_change_graphs(
+                group_parsed[group_id], include_stereo=self.include_stereo
+            )
             reference_index = change_graphs.reference_path_index
-            reference_mapping = group_parsed[group_id][reference_index]
+            reference_path_id = group_paths[group_id][reference_index]
+            aligned_mappings = [
+                align_mapped_reaction(mapping, change_graphs.path_source_map_to_coordinate[index])
+                for index, mapping in enumerate(group_parsed[group_id])
+            ]
+            for path_index, row_index in enumerate(self.group_to_rows[group_id]):
+                correspondence = change_graphs.path_source_map_to_coordinate[path_index]
+                aligned_row = self.rows[row_index]
+                audit = json.dumps(
+                    {
+                        "version": ALIGNMENT_VERSION,
+                        "adaptation_version": ADAPTATION_VERSION,
+                        "reaction": aligned_row.raw_rxn_smiles,
+                        "reference_path_id": reference_path_id,
+                        "reference_reactants": aligned_mappings[reference_index].mapped_reactants,
+                        "correspondence": correspondence,
+                        "include_stereo": self.include_stereo,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                self.rows[row_index] = replace(
+                    aligned_row,
+                    source_map_to_coordinate=correspondence,
+                    alignment_hash=hashlib.sha256(audit.encode("utf-8")).hexdigest(),
+                    aligned_rxn_smiles=(
+                        aligned_mappings[path_index].mapped_reactants
+                        + ">>"
+                        + aligned_mappings[path_index].mapped_products
+                    ),
+                    reference_path_id=reference_path_id,
+                )
+            reference_mapping = aligned_mappings[reference_index]
             reference_reactant, _ = reaction_graphs(
                 reference_mapping,
                 component_hash_buckets=self.component_hash_buckets,
@@ -357,12 +442,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                 mapped_component_key(molecule) for molecule in reference_mapping.reactant_mols
             )
             normalized_products = [
-                _normalize_graph_atom_maps(
-                    product,
-                    change_graphs.path_source_map_to_coordinate[path_index],
-                    path_id=group_paths[group_id][path_index],
-                )
-                for path_index, product in enumerate(group_products[group_id])
+                reaction_graphs(mapping, component_hash_buckets=self.component_hash_buckets)[1]
+                for mapping in aligned_mappings
             ]
             energies = torch.tensor(group_targets[group_id], dtype=torch.float32)
             baseline_target = float(energies.mean().item())
@@ -370,7 +451,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                 ReactionGroupSample(
                     group_id=group_id,
                     substrate_group=canonical_reactant_key(
-                        group_parsed[group_id][0].mapped_reactants
+                        group_parsed[group_id][0].mapped_reactants,
+                        include_stereo=self.include_stereo,
                     ),
                     path_cgrs=change_graphs.paths,
                     path_delta_cgrs=change_graphs.deltas,
@@ -381,9 +463,14 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                     energies=energies,
                     baseline_target=baseline_target,
                     residual_targets=energies - baseline_target,
-                    route_ids=torch.tensor(group_route_ids[group_id], dtype=torch.long),
+                    route_ids=torch.tensor(
+                        [self.route_id_vocabulary[label] for label in group_route_labels[group_id]],
+                        dtype=torch.long,
+                    ),
+                    route_labels=tuple(group_route_labels[group_id]),
                     path_ids=group_paths[group_id],
                     mappings=group_parsed[group_id],
+                    path_aligned_mappings=tuple(aligned_mappings),
                     path_source_map_to_coordinate=change_graphs.path_source_map_to_coordinate,
                 )
             )
@@ -416,11 +503,15 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
     ) -> str:
         options = {
             "schema_version": DATASET_CACHE_SCHEMA_VERSION,
+            "alignment_version": ALIGNMENT_VERSION,
+            "adaptation_version": ADAPTATION_VERSION,
+            "include_stereo": self.include_stereo,
             "target_column": self.target_column,
             "reaction_column": self.reaction_column,
             "path_id_column": path_id_column,
             "condition_columns": self.condition_columns,
             "route_id_column": self.route_id_column,
+            "route_id_vocabulary": self._specified_route_id_vocabulary,
             "baseline_reduction": self.baseline_reduction,
             "component_hash_buckets": self.component_hash_buckets,
             "on_error": on_error,
@@ -443,6 +534,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
             rows=self.rows,
             anomalies=self.anomalies,
             group_to_rows=self.group_to_rows,
+            group_to_source_rows=self.group_to_source_rows,
+            route_id_vocabulary=self.route_id_vocabulary,
             group_ids=self.group_ids,
             samples=self._samples,
             group_index=self.group_index,
@@ -453,6 +546,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         self.rows = payload.rows
         self.anomalies = payload.anomalies
         self.group_to_rows = payload.group_to_rows
+        self.group_to_source_rows = payload.group_to_source_rows
+        self.route_id_vocabulary = payload.route_id_vocabulary
         self.group_ids = payload.group_ids
         self._samples = payload.samples
         self.group_index = payload.group_index
@@ -527,6 +622,8 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
                         path_id_column=path_id_column,
                         condition_columns=self.condition_columns,
                         route_id_column=self.route_id_column,
+                        route_id_vocabulary=self._specified_route_id_vocabulary,
+                        include_stereo=self.include_stereo,
                         baseline_reduction=self.baseline_reduction,
                         component_hash_buckets=self.component_hash_buckets,
                         on_error=on_error,
@@ -545,19 +642,49 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         )
 
     @staticmethod
-    def _read_rows(source: str | Path | list[dict[str, str]]) -> list[dict[str, str]]:
+    def _read_rows(
+        source: str | Path | list[dict[str, str]],
+    ) -> tuple[list[dict[str, str]], list[int | None]]:
         if isinstance(source, list):
-            return source
-        with Path(source).open(newline="", encoding="utf-8") as handle:
-            return [dict(row) for row in csv.DictReader(handle)]
+            return source, [None] * len(source)
+        rows: list[dict[str, str]] = []
+        lines: list[int | None] = []
+        with Path(source).open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, [])
+            if len(header) != len(set(header)):
+                raise ValueError("CSV header contains duplicate columns")
+            while True:
+                first_line = reader.line_num + 1
+                try:
+                    fields = next(reader)
+                except StopIteration:
+                    break
+                if not fields:
+                    continue
+                # DictReader represents ragged records with None values/keys;
+                # retain that behavior so the per-record validator reports them.
+                row: dict[Any, Any] = dict(zip(header, fields, strict=False))
+                for missing in header[len(fields) :]:
+                    row[missing] = None
+                if len(fields) > len(header):
+                    row[None] = fields[len(header) :]
+                rows.append(row)
+                lines.append(first_line)
+        return rows, lines
 
     @staticmethod
-    def _path_id(row: dict[str, str], row_index: int, column: str | None) -> str:
-        candidates = [column] if column else ["path_id", "source_row_index", "reaction_id"]
+    def _path_id(row: dict[str, str], column: str | None) -> str:
+        candidates = (
+            [column]
+            if column
+            else ["path_id", "source_row_index", "reaction_id", "mapped_reaction_id"]
+        )
         for candidate in candidates:
-            if candidate and row.get(candidate, "").strip():
-                return row[candidate].strip()
-        return f"path_{row_index:08d}"
+            if candidate and candidate in row:
+                value = row[candidate]
+                return str(value) if value is not None else ""
+        return ""
 
     def __len__(self) -> int:
         return len(self._samples)
@@ -571,9 +698,25 @@ class ReactionGroupDataset(Dataset[ReactionGroupSample]):
         for row in self.rows:
             baseline_target, residual_target = self.path_targets[row.path_id]
             item = {
+                **row.metadata,
+                "csv_row_index": str(row.row_index),
+                "csv_line_number": str(row.csv_line_number)
+                if row.csv_line_number is not None
+                else "",
                 "path_id": row.path_id,
                 "group_id": row.group_id,
                 "mapped_rxn_smiles": row.mapped_rxn_smiles,
+                "raw_rxn_smiles": row.raw_rxn_smiles,
+                "source_map_to_coordinate": json.dumps(
+                    row.source_map_to_coordinate, sort_keys=True, separators=(",", ":")
+                ),
+                "alignment_version": ALIGNMENT_VERSION,
+                "adaptation_version": row.adaptation_version,
+                "aligned_rxn_smiles": row.aligned_rxn_smiles,
+                "reference_path_id": row.reference_path_id,
+                "route_label": row.route_label,
+                "route_index": str(row.route_id),
+                "alignment_hash": row.alignment_hash,
                 "activation_energy": str(row.activation_energy),
                 "baseline_target": str(baseline_target),
                 "residual_target": str(residual_target),

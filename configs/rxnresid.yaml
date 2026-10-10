@@ -5,9 +5,11 @@ data:
   cache_dir: .cache/rxnresid
   target_column: G_T_activate
   reaction_column: rxn_smiles
+  path_id_column: null
   condition_columns: []
   component_id_columns: [ene_id, diene_id]
   route_id_column: prod_id
+  include_stereo: true
   baseline_reduction: mean
   split_manifest: data/splits/group_10fold_seed42.json
 

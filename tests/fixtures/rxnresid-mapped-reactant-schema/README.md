@@ -37,8 +37,8 @@ For every fixture CSV, the corrected RxnResid implementation must satisfy:
 
 ```python
 assert len(dataset.rows) == 2
-assert len(dataset) == 1                 # do not split the substrate group
-assert len(dataset[0].mappings) == 2     # retain both reaction paths
+assert len(dataset) == 1  # do not split the substrate group
+assert len(dataset[0].mappings) == 2  # retain both reaction paths
 assert len(dataset[0].path_ids) == 2
 assert len(dataset[0].energies) == 2
 assert dataset.anomalies == []

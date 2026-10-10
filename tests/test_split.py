@@ -21,7 +21,7 @@ def test_split_is_group_level() -> None:
     labels = split_group_labels(data, split)
     assert len(labels) == len(data)
     path_splits = split_datasets(data, split)
-    assert sum(len(subset) for subset in path_splits.values()) == 2968
+    assert sum(len(subset) for subset in path_splits.values()) == len(data.rows)
     assert not set(path_splits["train"].group_ids) & set(path_splits["valid"].group_ids)
     statistics = path_splits["train"].target_statistics()
     assert statistics.target_std > statistics.residual_std > 0.0
@@ -33,9 +33,9 @@ def test_ten_fold_split_covers_each_group_once_as_test() -> None:
     splits = group_kfold_splits(data, num_folds=10, seed=42)
     assert len(splits) == 10
     assert all(
-        (len(split.train), len(split.valid), len(split.test)) == (1280, 160, 160)
-        for split in splits
+        len(split.train) + len(split.valid) + len(split.test) == len(data) for split in splits
     )
+    assert max(len(split.test) for split in splits) - min(len(split.test) for split in splits) <= 1
     for split in splits:
         assert not set(split.train) & set(split.valid)
         assert not set(split.train) & set(split.test)
@@ -56,4 +56,21 @@ def test_split_manifest_round_trip_and_dataset_validation(tmp_path) -> None:  # 
     loaded = load_split_manifest(path)
     assert loaded == manifest
     split = loaded.resolve(data, fold_index=3)
-    assert (len(split.train), len(split.valid), len(split.test)) == (1280, 160, 160)
+    assert set(split.train + split.valid + split.test) == set(range(len(data)))
+    assert len(split.train) + len(split.valid) + len(split.test) == len(data)
+
+
+def test_default_manifest_matches_current_record_snapshot() -> None:
+    data = dataset()
+    manifest = load_split_manifest("data/splits/group_10fold_seed42.json")
+    actual_ids = {row.path_id for row in data.rows}
+    test_ids = []
+    for fold in manifest.folds:
+        split = manifest.resolve(data, fold.fold_index)
+        subsets = split_datasets(data, split)
+        assigned_ids = [{sample.path_id for sample in subset} for subset in subsets.values()]
+        assert set.union(*assigned_ids) == actual_ids
+        assert sum(map(len, assigned_ids)) == len(actual_ids)
+        test_ids.extend(sample.path_id for sample in subsets["test"])
+    assert set(test_ids) == actual_ids
+    assert len(test_ids) == len(actual_ids)

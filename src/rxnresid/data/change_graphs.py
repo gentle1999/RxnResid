@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import torch
 from rdkit import Chem
@@ -23,11 +23,16 @@ from rxnresid.data.featurizer import (
 )
 from rxnresid.data.grouping import canonical_reactant_key
 from rxnresid.data.protocols import PyGDataStub
-from rxnresid.data.reaction_parser import ParsedReaction
+from rxnresid.data.reaction_parser import (
+    ParsedReaction,
+    parse_mapped_reaction,
+    validate_atom_mapping,
+)
 
 
 ATOM_CHANGE_STAT_DIM = 2
 EDGE_CHANGE_STAT_DIM = 5
+ALIGNMENT_VERSION = "reactant-isomorphism-v3"
 CHANGE_ATOM_FEATURE_DIM = ATOM_FEATURE_DIM * 3 + ATOM_CHANGE_STAT_DIM
 CHANGE_EDGE_FEATURE_DIM = EDGE_FEATURE_DIM * 3 + EDGE_CHANGE_STAT_DIM
 
@@ -89,20 +94,7 @@ def _atom_features_by_map(
 
 
 def _validate_complete_mapping(mapping: ParsedReaction) -> None:
-    reactant_maps = [
-        atom.GetAtomMapNum() for mol in mapping.reactant_mols for atom in mol.GetAtoms()
-    ]
-    product_maps = [atom.GetAtomMapNum() for mol in mapping.product_mols for atom in mol.GetAtoms()]
-    if any(map_number <= 0 for map_number in reactant_maps):
-        raise ValueError("Change graphs require every reactant atom to be mapped")
-    if any(map_number <= 0 for map_number in product_maps):
-        raise ValueError("Change graphs require every product atom to be mapped")
-    if len(set(reactant_maps)) != len(reactant_maps):
-        raise ValueError("Change graphs require unique reactant atom maps")
-    if len(set(product_maps)) != len(product_maps):
-        raise ValueError("Change graphs require unique product atom maps")
-    if set(reactant_maps) != set(product_maps):
-        raise ValueError("Change graphs require identical atom maps on both reaction sides")
+    validate_atom_mapping(mapping.reactant_mols, mapping.product_mols)
 
 
 def _mapped_bonds(
@@ -136,7 +128,7 @@ def _component_key(mol: Chem.Mol, *, isomeric: bool) -> str:
         atom.SetAtomMapNum(0)
     if not isomeric:
         Chem.RemoveStereochemistry(canonical)
-    return Chem.MolToSmiles(canonical, canonical=True, isomericSmiles=isomeric)
+    return Chem.MolToSmiles(canonical, canonical=True, isomericSmiles=True)
 
 
 def _reactant_structure_key(mols: Sequence[Chem.Mol], *, isomeric: bool) -> str:
@@ -203,41 +195,56 @@ def _component_atom_alignment(
     candidate: Chem.Mol,
     *,
     path_index: int,
+    include_stereo: bool,
 ) -> dict[int, int]:
-    """Find a deterministic candidate-map to reference-map isomorphism."""
-    reference_structure = Chem.Mol(reference)
-    candidate_structure = Chem.Mol(candidate)
+    """Find one deterministic exact isomorphism without enumerating automorphisms.
+
+    Equivalent symmetric atoms have no unique substrate-only correspondence.
+    Sort source/reference map labels before matching to make the choice repeatable,
+    then apply the chosen bijection unchanged to both reaction sides.
+    """
+    reference_order = sorted(
+        range(reference.GetNumAtoms()), key=lambda i: reference.GetAtomWithIdx(i).GetAtomMapNum()
+    )
+    candidate_order = sorted(
+        range(candidate.GetNumAtoms()), key=lambda i: candidate.GetAtomWithIdx(i).GetAtomMapNum()
+    )
+    reference_structure = Chem.RenumberAtoms(reference, reference_order)
+    candidate_structure = Chem.RenumberAtoms(candidate, candidate_order)
+    reference_maps = tuple(atom.GetAtomMapNum() for atom in reference_structure.GetAtoms())
+    candidate_maps = tuple(atom.GetAtomMapNum() for atom in candidate_structure.GetAtoms())
     for molecule in (reference_structure, candidate_structure):
         for atom in molecule.GetAtoms():
             atom.SetAtomMapNum(0)
-        Chem.RemoveStereochemistry(molecule)
-
-    matches = reference_structure.GetSubstructMatches(
-        candidate_structure,
-        uniquify=False,
-        useChirality=False,
-    )
-    if not matches:
+            atom.SetProp(
+                "_alignment_atom",
+                str(
+                    (
+                        atom.GetAtomicNum(),
+                        atom.GetIsotope(),
+                        atom.GetFormalCharge(),
+                        atom.GetNumRadicalElectrons(),
+                        atom.GetIsAromatic(),
+                        atom.GetTotalNumHs(includeNeighbors=True),
+                        atom.GetDegree(),
+                    )
+                ),
+            )
+        if not include_stereo:
+            Chem.RemoveStereochemistry(molecule)
+    params: Any = Chem.SubstructMatchParameters()
+    params.useChirality = include_stereo
+    params.atomProperties.append("_alignment_atom")
+    selected = reference_structure.GetSubstructMatch(candidate_structure, params)
+    if not selected:
         raise ValueError(
             f"{_SCHEMA_ERROR}: path {path_index} has no safe atom correspondence "
             "for an equivalent reactant component"
         )
-
-    reference_maps = tuple(atom.GetAtomMapNum() for atom in reference.GetAtoms())
-    candidate_maps = tuple(atom.GetAtomMapNum() for atom in candidate.GetAtoms())
-    candidate_order = sorted(
-        range(len(candidate_maps)), key=lambda index: (candidate_maps[index], index)
-    )
-    selected = min(
-        matches,
-        key=lambda match: tuple(reference_maps[match[index]] for index in candidate_order),
-    )
     alignment = {
-        candidate_maps[candidate_index]: reference_maps[reference_index]
-        for candidate_index, reference_index in enumerate(selected)
+        candidate_maps[index]: reference_maps[reference_index]
+        for index, reference_index in enumerate(selected)
     }
-    if any(map_number <= 0 for map_number in (*reference_maps, *candidate_maps)):
-        raise ValueError(f"{_SCHEMA_ERROR}: path {path_index} has an unmapped aligned atom")
     if len(alignment) != len(candidate_maps) or len(set(alignment.values())) != len(reference_maps):
         raise ValueError(
             f"{_SCHEMA_ERROR}: path {path_index} has a non-bijective atom correspondence"
@@ -245,17 +252,39 @@ def _component_atom_alignment(
     return alignment
 
 
+def align_mapped_reaction(
+    mapping: ParsedReaction, source_map_to_coordinate: dict[int, int]
+) -> ParsedReaction:
+    """Copy both sides into reference coordinates with canonical stereo traversal."""
+    source_maps = set(mapping.atom_mapping)
+    if set(source_map_to_coordinate) != source_maps or len(
+        set(source_map_to_coordinate.values())
+    ) != len(source_maps):
+        raise ValueError("Atom alignment must be a complete bijection")
+    sides: list[str] = []
+    for molecules in (mapping.reactant_mols, mapping.product_mols):
+        components: list[str] = []
+        for molecule in molecules:
+            copy = Chem.Mol(molecule)
+            for atom in copy.GetAtoms():
+                atom.SetAtomMapNum(source_map_to_coordinate[atom.GetAtomMapNum()])
+            components.append(Chem.MolToSmiles(copy, canonical=True, isomericSmiles=True))
+        sides.append(".".join(sorted(components)))
+    return parse_mapped_reaction(">>".join(sides), require_complete_mapping=True)
+
+
 def _structure_atom_alignment(
     reference_mols: Sequence[Chem.Mol],
     candidate_mols: Sequence[Chem.Mol],
     *,
     path_index: int,
+    include_stereo: bool,
 ) -> dict[int, int]:
     """Align all candidate components to a reference using map-free structure."""
     reference_components: dict[str, list[tuple[tuple[object, ...], int, Chem.Mol]]] = {}
     candidate_components: dict[str, list[tuple[tuple[object, ...], int, Chem.Mol]]] = {}
     for index, molecule in enumerate(reference_mols):
-        key = _component_key(molecule, isomeric=True)
+        key = _component_key(molecule, isomeric=include_stereo)
         sort_key = (
             Chem.MolToSmiles(molecule, canonical=True, isomericSmiles=True),
             tuple(atom.GetAtomMapNum() for atom in molecule.GetAtoms()),
@@ -263,7 +292,7 @@ def _structure_atom_alignment(
         )
         reference_components.setdefault(key, []).append((sort_key, index, molecule))
     for index, molecule in enumerate(candidate_mols):
-        key = _component_key(molecule, isomeric=True)
+        key = _component_key(molecule, isomeric=include_stereo)
         sort_key = (
             Chem.MolToSmiles(molecule, canonical=True, isomericSmiles=True),
             tuple(atom.GetAtomMapNum() for atom in molecule.GetAtoms()),
@@ -285,6 +314,7 @@ def _structure_atom_alignment(
                 reference,
                 candidate,
                 path_index=path_index,
+                include_stereo=include_stereo,
             )
             for candidate_map, reference_map in component_alignment.items():
                 if candidate_map in alignment or reference_map in alignment.values():
@@ -295,87 +325,10 @@ def _structure_atom_alignment(
     return alignment
 
 
-def _remap_reactant_features(
-    features: _ReactantFeatures,
-    source_map_to_coordinate: dict[int, int],
-    *,
-    path_index: int,
-) -> _ReactantFeatures:
-    """Project one path's features into the group's coordinate map."""
-    if set(source_map_to_coordinate) != set(features.atom_features):
-        raise ValueError(
-            f"{_SCHEMA_ERROR}: path {path_index} atom correspondence does not cover all atoms"
-        )
-
-    atom_features = {
-        source_map_to_coordinate[source_map]: feature
-        for source_map, feature in features.atom_features.items()
-    }
-    atom_core_features = {
-        source_map_to_coordinate[source_map]: feature
-        for source_map, feature in features.atom_core_features.items()
-    }
-    component_tokens = {
-        source_map_to_coordinate[source_map]: token
-        for source_map, token in features.component_tokens.items()
-    }
-    group_component_tokens = {
-        source_map_to_coordinate[source_map]: token
-        for source_map, token in features.group_component_tokens.items()
-    }
-    bonds: dict[tuple[int, int], list[float]] = {}
-    for (left, right), feature in features.bonds.items():
-        coordinate_left = source_map_to_coordinate[left]
-        coordinate_right = source_map_to_coordinate[right]
-        coordinate_pair = (
-            min(coordinate_left, coordinate_right),
-            max(coordinate_left, coordinate_right),
-        )
-        if coordinate_pair in bonds:
-            raise ValueError(
-                f"{_SCHEMA_ERROR}: path {path_index} maps multiple bonds to atom pair "
-                f"{coordinate_pair}"
-            )
-        bonds[coordinate_pair] = feature
-    component_maps = tuple(
-        sorted(
-            tuple(sorted(source_map_to_coordinate[map_number] for map_number in component))
-            for component in features.component_maps
-        )
-    )
-    return _ReactantFeatures(
-        atom_features=atom_features,
-        atom_core_features=atom_core_features,
-        bonds=bonds,
-        component_tokens=component_tokens,
-        group_component_tokens=group_component_tokens,
-        component_maps=component_maps,
-    )
-
-
-def _remap_atom_features(
-    features: dict[int, list[float]],
-    source_map_to_coordinate: dict[int, int],
-    *,
-    path_index: int,
-    side: str,
-) -> dict[int, list[float]]:
-    if set(source_map_to_coordinate) != set(features):
-        raise ValueError(
-            f"{_SCHEMA_ERROR}: path {path_index} {side} maps do not match its reactants"
-        )
-    remapped = {
-        source_map_to_coordinate[source_map]: feature for source_map, feature in features.items()
-    }
-    if len(remapped) != len(features):
-        raise ValueError(
-            f"{_SCHEMA_ERROR}: path {path_index} has a non-bijective {side} atom alignment"
-        )
-    return remapped
-
-
 def _reactant_alignment(
     mappings: Sequence[ParsedReaction],
+    *,
+    include_stereo: bool = True,
 ) -> tuple[_ReactantAlignment, tuple[_ReactantFeatures, ...]]:
     if not mappings:
         raise ValueError("At least one mapped reaction is required")
@@ -384,13 +337,17 @@ def _reactant_alignment(
     raw_reactants = tuple(_reactant_features(mapping.reactant_mols) for mapping in mappings)
     reference_index = min(
         range(len(mappings)),
-        key=lambda index: mappings[index].mapped_reactants,
+        key=lambda index: (mappings[index].mapped_reactants, mappings[index].mapped_products),
     )
-    reference = raw_reactants[reference_index]
+    reference_identity = {number: number for number in raw_reactants[reference_index].atom_features}
+    reference_mapping = align_mapped_reaction(mappings[reference_index], reference_identity)
+    reference = _reactant_features(reference_mapping.reactant_mols)
     # Use the same map-free isomeric key as grouping.py.  This preserves
     # symmetry-equivalent mapped spellings while keeping real stereo changes
     # out of a single group.
-    reference_reactant_key = canonical_reactant_key(mappings[reference_index].mapped_reactants)
+    reference_reactant_key = canonical_reactant_key(
+        mappings[reference_index].mapped_reactants, include_stereo=include_stereo
+    )
     reference_structure_key = _reactant_structure_key(
         mappings[reference_index].reactant_mols,
         isomeric=False,
@@ -401,7 +358,9 @@ def _reactant_alignment(
     source_map_to_coordinate: list[dict[int, int]] = []
     reactants: list[_ReactantFeatures] = []
     for path_index, (mapping, candidate) in enumerate(zip(mappings, raw_reactants, strict=True)):
-        candidate_reactant_key = canonical_reactant_key(mapping.mapped_reactants)
+        candidate_reactant_key = canonical_reactant_key(
+            mapping.mapped_reactants, include_stereo=include_stereo
+        )
         if candidate_reactant_key != reference_reactant_key:
             candidate_structure_key = _reactant_structure_key(mapping.reactant_mols, isomeric=False)
             if candidate_structure_key != reference_structure_key:
@@ -414,7 +373,14 @@ def _reactant_alignment(
                 f"{_SCHEMA_ERROR}: path {path_index} has non-equivalent reactant stereo; "
                 "it must be assigned to a different reaction group"
             )
-        if path_index == reference_index or _identity_alignment_is_safe(reference, candidate):
+        identity = {number: number for number in candidate.atom_features}
+        identity_is_safe = _identity_alignment_is_safe(reference, candidate)
+        if identity_is_safe and include_stereo:
+            identity_mapping = align_mapped_reaction(mapping, identity)
+            identity_is_safe = (
+                identity_mapping.mapped_reactants == reference_mapping.mapped_reactants
+            )
+        if path_index == reference_index or identity_is_safe:
             coordinate_alignment = {
                 map_number: map_number for map_number in candidate.atom_features
             }
@@ -423,11 +389,10 @@ def _reactant_alignment(
                 mappings[reference_index].reactant_mols,
                 mapping.reactant_mols,
                 path_index=path_index,
+                include_stereo=include_stereo,
             )
-        normalized = _remap_reactant_features(
-            candidate,
-            coordinate_alignment,
-            path_index=path_index,
+        normalized = _reactant_features(
+            align_mapped_reaction(mapping, coordinate_alignment).reactant_mols
         )
         if set(normalized.atom_features) != reference_maps:
             raise ValueError(
@@ -546,33 +511,24 @@ def _build_change_graph(
         if source_map_to_coordinate is None:
             source_map_to_coordinate = alignment.source_map_to_coordinate
     elif reactant_features is None:
-        for mapping in mappings:
-            _validate_complete_mapping(mapping)
-        raw_reactants = tuple(_reactant_features(mapping.reactant_mols) for mapping in mappings)
         if source_map_to_coordinate is None:
             raise ValueError("Reactant source-map coordinates are required with a shared alignment")
         reactant_features = tuple(
-            _remap_reactant_features(
-                features,
-                source_map_to_coordinate[path_index],
-                path_index=path_index,
+            _reactant_features(
+                align_mapped_reaction(mapping, source_map_to_coordinate[index]).reactant_mols
             )
-            for path_index, features in enumerate(raw_reactants)
+            for index, mapping in enumerate(mappings)
         )
     if reactant_features is None or len(reactant_features) != len(mappings):
         raise ValueError("Reactant feature rows do not match the mapped reaction paths")
     if source_map_to_coordinate is None or len(source_map_to_coordinate) != len(mappings):
         raise ValueError("Reactant source-map coordinates do not match the mapped reaction paths")
 
-    product_atoms = [
-        _remap_atom_features(
-            _atom_features_by_map(mapping.product_mols),
-            source_map_to_coordinate[path_index],
-            path_index=path_index,
-            side="product",
-        )
-        for path_index, mapping in enumerate(mappings)
-    ]
+    aligned_mappings = tuple(
+        align_mapped_reaction(mapping, source_map_to_coordinate[index])
+        for index, mapping in enumerate(mappings)
+    )
+    product_atoms = [_atom_features_by_map(mapping.product_mols) for mapping in aligned_mappings]
     unknown_product_maps = set().union(*(set(table) for table in product_atoms)) - set(
         alignment.map_to_node
     )
@@ -613,9 +569,9 @@ def _build_change_graph(
         _product_bonds(
             mapping.product_mols,
             alignment.map_to_node,
-            source_map_to_coordinate[path_index],
+            {number: number for number in mapping.atom_mapping},
         )
-        for path_index, mapping in enumerate(mappings)
+        for mapping in aligned_mappings
     ]
     edge_key_set = set(alignment.edge_maps)
     for table in product_bonds:
@@ -707,10 +663,12 @@ def _build_change_graph(
     )
 
 
-def reaction_change_graphs(mappings: Sequence[ParsedReaction]) -> ReactionChangeGraphs:
+def reaction_change_graphs(
+    mappings: Sequence[ParsedReaction], *, include_stereo: bool = True
+) -> ReactionChangeGraphs:
     """Build one permutation-invariant group graph and exact per-path CGRs."""
     mappings = tuple(mappings)
-    alignment, reactant_features = _reactant_alignment(mappings)
+    alignment, reactant_features = _reactant_alignment(mappings, include_stereo=include_stereo)
     group = _build_change_graph(
         mappings,
         alignment=alignment,
@@ -770,6 +728,8 @@ def reaction_change_graphs(mappings: Sequence[ParsedReaction]) -> ReactionChange
 
 
 __all__ = [
+    "ALIGNMENT_VERSION",
+    "align_mapped_reaction",
     "CHANGE_ATOM_FEATURE_DIM",
     "CHANGE_EDGE_FEATURE_DIM",
     "ReactionChangeGraphs",

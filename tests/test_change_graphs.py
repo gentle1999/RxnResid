@@ -75,5 +75,5 @@ def test_change_graph_rejects_non_equivalent_reactant_stereo() -> None:
 
 def test_change_graph_requires_complete_mapping() -> None:
     incomplete = parse_mapped_reaction("[CH3:1].O>>[CH3:1]O")
-    with pytest.raises(ValueError, match="every reactant atom"):
+    with pytest.raises(ValueError, match="[Ee]very reactant atom"):
         reaction_change_graphs([incomplete])

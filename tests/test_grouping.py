@@ -4,7 +4,7 @@ from rxnresid.data.grouping import canonical_reactant_key, group_id_from_reactio
 from rxnresid.data.reaction_parser import ReactionParseError, parse_mapped_reaction
 
 
-REACTION = "[C:1](=[C:2])([H:3])[H:4].[c:5]1[s:6][c:7][c:8][c:9]1>>[C:1]1([H:3])([H:4])[C:2]([H:5])([H:6])[c:5]2[s:6][c:7][c:8][c:9]12"
+REACTION = "[CH3:1][CH2:2][OH:3]>>[CH3:1][CH:2]=[O:3]"
 
 
 def test_map_numbers_do_not_change_group_id() -> None:

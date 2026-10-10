@@ -8,9 +8,8 @@ from rxnresid.data.change_graphs import reaction_change_graphs
 from rxnresid.data.collate import collate_reaction_paths
 from rxnresid.data.dataset import ReactionGroupDataset
 from rxnresid.data.featurizer import (
-    BOND_STEREO_FEATURE_DIM,
+    ATOM_FEATURE_DIM,
     EDGE_FEATURE_DIM,
-    bond_feature,
 )
 from rxnresid.data.reaction_parser import parse_mapped_reaction
 
@@ -56,10 +55,40 @@ def test_mapped_reactant_schema_fixture_keeps_one_complete_group(
     assert [mapping.mapped_products for mapping in dataset[0].mappings] == [
         mapping.mapped_products for mapping in mappings
     ]
-    assert [product.atom_map_numbers.tolist() for product in dataset[0].products] == [
-        [atom.GetAtomMapNum() for molecule in mapping.product_mols for atom in molecule.GetAtoms()]
-        for mapping in mappings
-    ]
+    # Every original product bond must land at the projected reference endpoints.
+    for mapping, product, correspondence in zip(
+        mappings, dataset[0].products, dataset[0].path_source_map_to_coordinate, strict=True
+    ):
+        assert set(product.atom_map_numbers.tolist()) == set(correspondence.values())
+        nodes = {number: i for i, number in enumerate(product.atom_map_numbers.tolist())}
+        actual_pairs = {
+            tuple(
+                sorted(
+                    (product.atom_map_numbers[left].item(), product.atom_map_numbers[right].item())
+                )
+            )
+            for left, right in product.edge_index.t().tolist()
+        }
+        expected_pairs = {
+            tuple(
+                sorted(
+                    (
+                        correspondence[bond.GetBeginAtom().GetAtomMapNum()],
+                        correspondence[bond.GetEndAtom().GetAtomMapNum()],
+                    )
+                )
+            )
+            for mol in mapping.product_mols
+            for bond in mol.GetBonds()
+        }
+        assert actual_pairs == expected_pairs
+        for mol in mapping.product_mols:
+            for bond in mol.GetBonds():
+                left = nodes[correspondence[bond.GetBeginAtom().GetAtomMapNum()]]
+                right = nodes[correspondence[bond.GetEndAtom().GetAtomMapNum()]]
+                assert (
+                    (product.edge_index[0] == left) & (product.edge_index[1] == right)
+                ).sum() == 1
 
 
 def _edge_feature_by_maps(graph, left_map: int, right_map: int) -> torch.Tensor:
@@ -93,40 +122,20 @@ def test_group_graph_is_order_invariant_and_paths_keep_reactant_schema(filename:
         assert torch.equal(delta.component_id, forward.group.component_id)
         assert torch.equal(delta.edge_index, forward.group.edge_index)
 
-    # These are equivalent symmetry-related mapped representations, not
-    # incompatible substrates.  The group substrate block still covers every
-    # path-level stereo encoding rather than silently keeping only path zero.
-    stereo_features: dict[tuple[int, int], list[list[float]]] = {}
-    for mapping in mappings:
-        for molecule in mapping.reactant_mols:
-            for bond in molecule.GetBonds():
-                if bond.GetBondTypeAsDouble() != 2.0 or str(bond.GetStereo()) == "STEREONONE":
-                    continue
-                left = molecule.GetAtomWithIdx(bond.GetBeginAtomIdx()).GetAtomMapNum()
-                right = molecule.GetAtomWithIdx(bond.GetEndAtomIdx()).GetAtomMapNum()
-                pair = (min(left, right), max(left, right))
-                stereo_features.setdefault(pair, []).append(bond_feature(bond))
-
-    assert stereo_features
-    for pair, expected_features in stereo_features.items():
-        if len({tuple(feature[-BOND_STEREO_FEATURE_DIM:]) for feature in expected_features}) < 2:
-            continue
-        group_feature = _edge_feature_by_maps(forward.group, *pair)[:EDGE_FEATURE_DIM]
-        path_features = [
-            _edge_feature_by_maps(path, *pair)[:EDGE_FEATURE_DIM] for path in forward.paths
-        ]
-        for path_feature, expected in zip(path_features, expected_features, strict=True):
-            assert path_feature[-BOND_STEREO_FEATURE_DIM:].tolist() == pytest.approx(
-                expected[-BOND_STEREO_FEATURE_DIM:]
-            )
-        assert group_feature[-BOND_STEREO_FEATURE_DIM:].tolist() == pytest.approx(
-            [
-                max(feature[-BOND_STEREO_FEATURE_DIM + index] for feature in expected_features)
-                for index in range(BOND_STEREO_FEATURE_DIM)
-            ]
-        )
-        return
-    raise AssertionError("fixture does not contain a mapped reactant stereo difference")
+    # Symmetry-related spellings must describe identical reactant features
+    # after stereo-aware isomorphism and canonical traversal in reference maps.
+    assert torch.equal(
+        forward.paths[0].x[:, :ATOM_FEATURE_DIM], forward.paths[1].x[:, :ATOM_FEATURE_DIM]
+    )
+    for mol in mappings[forward.reference_path_index].reactant_mols:
+        for bond in mol.GetBonds():
+            pair = (bond.GetBeginAtom().GetAtomMapNum(), bond.GetEndAtom().GetAtomMapNum())
+            first = _edge_feature_by_maps(forward.paths[0], *pair)[:EDGE_FEATURE_DIM]
+            second = _edge_feature_by_maps(forward.paths[1], *pair)[:EDGE_FEATURE_DIM]
+            assert torch.equal(first, second)
+    assert forward.path_source_map_to_coordinate == tuple(
+        reversed(reverse.path_source_map_to_coordinate)
+    )
 
 
 def test_alignment_does_not_depend_on_reactant_component_or_atom_order() -> None:

@@ -67,6 +67,58 @@ Paths are partitioned by reactant group to prevent a group from appearing in
 more than one split. Dataset paths, column names, split metadata, and model
 settings are defined in [`configs/rxnresid.yaml`](configs/rxnresid.yaml).
 
+Reactant identity uses canonical SMILES after removing atom maps and sorting
+components. `data.include_stereo: true` (the default) separates stereoisomers;
+`false` merges them while retaining isotope identities. Explicit hydrogen atoms
+remain in the graphs and must have mappings too. Configured conditions remain
+part of the reaction-group key.
+
+Every source record requires a nonempty, unique path ID, a finite target, and
+positive, unique atom maps covering both sides with matching elements and
+isotopes. Set `data.path_id_column` for an external ID column; otherwise the
+loader looks for `path_id`, `source_row_index`, `reaction_id`, or
+`mapped_reaction_id`. IDs are read as strings, including leading zeros and large
+integers. Route labels have a separate integer vocabulary saved in checkpoints
+and reused during prediction and refitting.
+
+Within each group, a deterministic reference path supplies atom coordinates.
+Exact reactant graph isomorphism respects the configured stereo policy; the
+same correspondence is applied to the product before CGR construction and graph
+subtraction. Existing maps are retained only when they already provide a valid
+correspondence. Symmetry can admit several valid correspondences: sorted map
+labels provide a repeatable choice without enumerating all automorphisms. The
+selected correspondence and reference path are retained for audit.
+
+`prepare_table` uses the dataset's `on_error="record"` mode: bad records are skipped with their source row, CSV
+line, path ID, and failed validation rule recorded in the anomalies CSV.
+Internal row indices remain contiguous after skipping. Prepared output retains
+source metadata and IDs, raw and aligned reactions, the atom correspondence,
+reference path, adaptation/alignment versions, and an alignment hash. The cache
+key includes source bytes, preprocessing options, route encoding, software
+versions, and adaptation/alignment versions; algorithm changes require a version
+bump.
+
+There is no fixed record-count requirement. Each manifest fold must cover the
+actual group IDs exactly, without duplicates or overlap. Row counts and record
+fingerprints check snapshot consistency. Changing grouping or source records
+requires regenerating the split manifest with `scripts/create_group_folds.py`.
+
+For a reaction-collection export, use its original identifiers and columns:
+
+```python
+from rxnresid.data.prepare import prepare_table
+
+report = prepare_table(
+    "reaction-collection.csv",
+    "reaction-collection.adapted.csv",
+    path_id_column="mapped_reaction_id",
+    reaction_column="mapped_reaction_smiles",
+    target_column="activation_free_energy_kcal_mol",
+    route_id_column=None,
+    include_stereo=True,
+)
+```
+
 ## Training
 
 Train a fold from random initialization:

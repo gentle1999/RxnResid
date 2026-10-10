@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from rdkit import Chem
 
 
 class ReactionParseError(ValueError):
     """Raised when a mapped reaction cannot be represented safely."""
+
+    def __init__(self, message: str, *, rule: str = "reaction_syntax") -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 EDIT_FEATURE_NAMES = (
@@ -73,9 +78,12 @@ def _parse_side(side: str, label: str) -> tuple[tuple[Chem.Mol, ...], dict[int, 
     molecules: list[Chem.Mol] = []
     map_to_index: dict[int, int] = {}
     atom_offset = 0
+    params: Any = Chem.SmilesParserParams()
+    # Explicit hydrogen atoms carry source identities and must be validated too.
+    params.removeHs = False
     for component in side.split("."):
-        mol = Chem.MolFromSmiles(component)
-        if mol is None:
+        mol = Chem.MolFromSmiles(component, params)
+        if mol is None or mol.GetNumAtoms() == 0:
             raise ReactionParseError(f"Could not parse {label} component: {component!r}")
         molecules.append(mol)
         for atom in mol.GetAtoms():
@@ -83,7 +91,10 @@ def _parse_side(side: str, label: str) -> tuple[tuple[Chem.Mol, ...], dict[int, 
             if map_number <= 0:
                 continue
             if map_number in map_to_index:
-                raise ReactionParseError(f"Duplicate atom map number {map_number} on {label} side")
+                raise ReactionParseError(
+                    f"Duplicate atom map number {map_number} on {label} side",
+                    rule="unique_atom_mapping",
+                )
             map_to_index[map_number] = atom_offset + atom.GetIdx()
         atom_offset += mol.GetNumAtoms()
     return tuple(molecules), map_to_index
@@ -206,6 +217,42 @@ def _extract_edits(
     )
 
 
+def validate_atom_mapping(
+    reactant_mols: tuple[Chem.Mol, ...], product_mols: tuple[Chem.Mol, ...]
+) -> None:
+    """Validate all source atoms before grouping or coordinate adaptation."""
+    sides: list[dict[int, tuple[int, int]]] = []
+    for label, molecules in (("reactant", reactant_mols), ("product", product_mols)):
+        atoms: dict[int, tuple[int, int]] = {}
+        for mol in molecules:
+            for atom in mol.GetAtoms():
+                number = atom.GetAtomMapNum()
+                if number <= 0:
+                    raise ReactionParseError(
+                        f"Every {label} atom must have a positive atom map",
+                        rule="complete_atom_mapping",
+                    )
+                if number in atoms:
+                    raise ReactionParseError(
+                        f"Duplicate atom map number {number} on {label} side",
+                        rule="unique_atom_mapping",
+                    )
+                atoms[number] = (atom.GetAtomicNum(), atom.GetIsotope())
+        sides.append(atoms)
+    reactant_atoms, product_atoms = sides
+    if set(reactant_atoms) != set(product_atoms):
+        raise ReactionParseError(
+            "Reactant and product atom maps are not identical",
+            rule="conserved_atom_mapping",
+        )
+    for number in sorted(reactant_atoms):
+        if reactant_atoms[number] != product_atoms[number]:
+            raise ReactionParseError(
+                f"Atom map {number} changes element or isotope between reaction sides",
+                rule="conserved_element_isotope",
+            )
+
+
 def parse_mapped_reaction(
     rxn_smiles: str, require_complete_mapping: bool = False
 ) -> ParsedReaction:
@@ -216,8 +263,8 @@ def parse_mapped_reaction(
     mapped_reactants, mapped_products = parts
     reactant_mols, reactant_maps = _parse_side(mapped_reactants, "reactant")
     product_mols, product_maps = _parse_side(mapped_products, "product")
-    if require_complete_mapping and set(reactant_maps) != set(product_maps):
-        raise ReactionParseError("Reactant and product atom maps are not identical")
+    if require_complete_mapping:
+        validate_atom_mapping(reactant_mols, product_mols)
     atom_mapping = {
         map_number: (reactant_maps[map_number], product_maps[map_number])
         for map_number in sorted(set(reactant_maps) & set(product_maps))

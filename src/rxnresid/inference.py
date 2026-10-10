@@ -55,6 +55,7 @@ def _load_model(
             f"missing={sorted(unexpected_missing)}, "
             f"unexpected={sorted(incompatible.unexpected_keys)}"
         )
+    cast(Any, model)._route_id_vocabulary = checkpoint.get("route_id_vocabulary")
     model.to(device)
     model.eval()
     return model, config, resolved
@@ -73,20 +74,24 @@ def predict_one(
     checkpoint_path: str | Path,
     reaction_smiles: str,
     *,
-    route_id: int = 0,
+    route_id: str | int = 0,
     path_id: str = "reaction-0",
     conditions: Mapping[str, str] | None = None,
     device: Literal["auto", "cpu"] | torch.device = "auto",
 ) -> PredictionRecord:
     """Predict one mapped reaction and return physical-unit uncertainty fields.
 
-    ``reaction_smiles`` must use the same atom-mapping convention as training.
+    Atom maps are validated and aligned independently of their source numbering.
+    ``route_id`` is the external route label; checkpoints retain its numeric encoding.
     A dummy target is used only to satisfy the dataset preprocessing contract;
     the returned ``PredictionRecord.target`` is ``NaN`` because no label was
     supplied at inference time.
     """
-    if route_id < 0:
+    if isinstance(route_id, int) and route_id < 0:
         raise ValueError("route_id must be non-negative")
+    route_label = str(route_id)
+    if not route_label.strip():
+        raise ValueError("route_id must not be empty")
     if not reaction_smiles.strip():
         raise ValueError("reaction_smiles must not be empty")
     if not path_id.strip():
@@ -94,9 +99,17 @@ def predict_one(
 
     target_device = _device_from_setting(device)
     model, config, _ = _load_model(checkpoint_path, device=target_device)
-    if route_id >= config.model.route_id_count:
+    vocabulary = getattr(model, "_route_id_vocabulary", None)
+    if vocabulary is None:
+        # Legacy checkpoints used numeric route labels directly as embedding indices.
+        route_index = int(route_label)
+        vocabulary = {route_label: route_index}
+    elif route_label not in vocabulary:
+        raise ValueError(f"Unknown external route_id: {route_label!r}")
+    route_index = vocabulary[route_label]
+    if route_index < 0 or route_index >= config.model.route_id_count:
         raise ValueError(
-            f"route_id {route_id} is outside the configured range "
+            f"route_id {route_label!r} encodes to {route_index}, outside the configured range "
             f"[0, {config.model.route_id_count})"
         )
     supplied_conditions = dict(conditions or {})
@@ -112,6 +125,7 @@ def predict_one(
         raise ValueError(f"Missing configured conditions: {missing_conditions}")
     reserved_columns = {
         "path_id",
+        config.data.path_id_column,
         config.data.reaction_column,
         config.data.target_column,
         config.data.route_id_column,
@@ -120,11 +134,11 @@ def predict_one(
         raise ValueError("conditions cannot override path, reaction, target, or route columns")
     source = [
         {
-            "path_id": path_id,
+            config.data.path_id_column or "path_id": path_id,
             config.data.reaction_column: reaction_smiles,
             config.data.target_column: "0.0",
             **(
-                {config.data.route_id_column: str(route_id)}
+                {config.data.route_id_column: route_label}
                 if config.data.route_id_column is not None
                 else {}
             ),
@@ -135,8 +149,11 @@ def predict_one(
         source,
         target_column=config.data.target_column,
         reaction_column=config.data.reaction_column,
+        path_id_column=config.data.path_id_column,
         condition_columns=config.data.condition_columns,
         route_id_column=config.data.route_id_column,
+        route_id_vocabulary=vocabulary if config.data.route_id_column else {"0": 0},
+        include_stereo=config.data.include_stereo,
         baseline_reduction=config.data.baseline_reduction,
         component_hash_buckets=config.model.component_hash_buckets,
         cache_dir=None,

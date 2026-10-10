@@ -257,7 +257,9 @@ def collate_reaction_paths(samples: list[ReactionPathSample]) -> RxnResidBatch:
         dtype=torch.long,
     )
 
-    edit_features = torch.stack([reaction_edit_features(sample.mapping) for sample in samples])
+    edit_features = torch.stack(
+        [reaction_edit_features(sample.aligned_mapping or sample.mapping) for sample in samples]
+    )
     present: list[float] = []
     substrate_nodes: list[int] = []
     product_nodes: list[int] = []
@@ -284,11 +286,15 @@ def collate_reaction_paths(samples: list[ReactionPathSample]) -> RxnResidBatch:
             for node_index, map_number in enumerate(sample.product.atom_map_numbers.tolist())
             if map_number > 0
         }
-        source_map_to_coordinate = sample.source_map_to_coordinate or {
-            int(map_number): int(map_number) for map_number in sample.mapping.atom_mapping
-        }
+        path_mapping = sample.aligned_mapping or sample.mapping
+        source_map_to_coordinate = (
+            {int(number): int(number) for number in path_mapping.atom_mapping}
+            if sample.aligned_mapping is not None
+            else sample.source_map_to_coordinate
+            or {int(number): int(number) for number in path_mapping.atom_mapping}
+        )
         source_to_product_node: dict[int, int] = {}
-        for source_map in sample.mapping.atom_mapping:
+        for source_map in path_mapping.atom_mapping:
             coordinate_map = source_map_to_coordinate.get(source_map)
             if coordinate_map is not None and coordinate_map in product_map_to_node:
                 source_to_product_node[source_map] = product_map_to_node[coordinate_map]
@@ -306,7 +312,7 @@ def collate_reaction_paths(samples: list[ReactionPathSample]) -> RxnResidBatch:
             coordinate_maps[source_map] = coordinate_map
         present.append(float(bool(coordinate_maps)))
         for source_map in sorted(
-            set(coordinate_maps) & set(sample.mapping.edits.reaction_center_maps)
+            set(coordinate_maps) & set(path_mapping.edits.reaction_center_maps)
         ):
             substrate_nodes.append(
                 group_substrate_maps[path_to_group[path_index]][coordinate_maps[source_map]]
@@ -317,7 +323,10 @@ def collate_reaction_paths(samples: list[ReactionPathSample]) -> RxnResidBatch:
     mapping = MappingBatch(
         edit_features=edit_features,
         stereo_signature_token=torch.tensor(
-            [reaction_stereo_signature_token(sample.mapping) for sample in samples],
+            [
+                reaction_stereo_signature_token(sample.aligned_mapping or sample.mapping)
+                for sample in samples
+            ],
             dtype=torch.long,
         ),
         mapping_present=torch.tensor(present, dtype=torch.float32),

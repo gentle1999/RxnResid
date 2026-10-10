@@ -48,9 +48,11 @@ class DataConfig:
     cache_dir: str = ".cache/rxnresid"
     target_column: str = "G_T_activate"
     reaction_column: str = "rxn_smiles"
+    path_id_column: str | None = None
     condition_columns: tuple[str, ...] = ()
     component_id_columns: tuple[str, ...] = ("ene_id", "diene_id")
     route_id_column: str | None = "prod_id"
+    include_stereo: bool = True
     baseline_reduction: Literal["mean"] = "mean"
     split_manifest: str = "data/splits/group_10fold_seed42.json"
 
@@ -81,6 +83,14 @@ class DataConfig:
         )
         if route_id_column == "":
             raise ValueError("data.route_id_column must not be empty")
+        path_id_column = mapping.get("path_id_column")
+        if path_id_column is not None:
+            path_id_column = str(path_id_column).strip()
+            if not path_id_column:
+                raise ValueError("data.path_id_column must not be empty")
+        include_stereo = mapping.get("include_stereo", True)
+        if not isinstance(include_stereo, bool):
+            raise ValueError("data.include_stereo must be a boolean")
         baseline_reduction = str(mapping.get("baseline_reduction", "mean"))
         if baseline_reduction != "mean":
             raise ValueError("RxnResid requires data.baseline_reduction=mean")
@@ -95,9 +105,11 @@ class DataConfig:
             cache_dir=cache_dir,
             target_column=str(mapping.get("target_column", "G_T_activate")),
             reaction_column=str(mapping.get("reaction_column", "rxn_smiles")),
+            path_id_column=path_id_column,
             condition_columns=tuple(str(column) for column in condition_columns),
             component_id_columns=normalized_component_columns,
             route_id_column=route_id_column,
+            include_stereo=include_stereo,
             baseline_reduction=cast(Literal["mean"], baseline_reduction),
             split_manifest=split_manifest,
         )
